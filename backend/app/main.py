@@ -9,6 +9,8 @@ from fastapi.templating import Jinja2Templates
 
 from app import config
 from app.db import fetch_all, fetch_one, get_connection, init_db
+from app.llm import extract_issues
+from app.meeting_analysis import apply_updates
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -29,7 +31,7 @@ def startup() -> None:
 @app.get("/")
 async def index(
     request: Request,
-    status: str = Query("", max_length=20),
+    status: str = Query("Open", max_length=20),
     domain: str = Query("", max_length=100),
     owner: str = Query("", max_length=100),
 ):
@@ -84,7 +86,7 @@ async def index(
 @app.get("/issues", response_class=HTMLResponse)
 async def issues_list(
     request: Request,
-    status: str = Query("", max_length=20),
+    status: str = Query("Open", max_length=20),
     domain: str = Query("", max_length=100),
     owner: str = Query("", max_length=100),
 ):
@@ -671,6 +673,121 @@ async def delete_owner_option(
     with get_connection() as conn:
         conn.execute("DELETE FROM owner_options WHERE id = ?", [owner_id])
         conn.commit()
+    return RedirectResponse(url=return_to, status_code=303)
+
+
+@app.post("/analysis/meetings")
+async def analyze_meetings(
+    request: Request,
+    start: str = Form(...),
+    end: str = Form(...),
+    return_to: str = Form("/"),
+):
+    with get_connection() as conn:
+        meetings = fetch_all(
+            conn,
+            """
+            SELECT id, meeting_date
+            FROM meetings
+            WHERE meeting_date BETWEEN ? AND ?
+            ORDER BY meeting_date ASC
+            """,
+            [start, end],
+        )
+
+        for meeting in meetings:
+            documents = fetch_all(
+                conn,
+                """
+                SELECT id, title, path, calibre_book_id, text_excerpt
+                FROM documents
+                WHERE id IN (
+                    SELECT document_id FROM meeting_document_links WHERE meeting_id = ?
+                )
+                ORDER BY datetime(created_at) DESC
+                """,
+                [meeting["id"]],
+            )
+
+            doc_payloads = []
+            for doc in documents:
+                text = doc["text_excerpt"] or ""
+                if not text:
+                    continue
+                doc_payloads.append(
+                    {
+                        "id": doc["id"],
+                        "title": doc["title"],
+                        "path": doc["path"],
+                        "text": text,
+                    }
+                )
+
+            if not doc_payloads:
+                continue
+
+            issues = fetch_all(
+                conn,
+                """
+                SELECT id, title, domain, status, confidence, situation, complication, resolution, next_steps
+                FROM issues
+                ORDER BY datetime(updated_at) DESC
+                LIMIT 200
+                """,
+            )
+            issue_payloads = []
+            for issue in issues:
+                steps = fetch_all(
+                    conn,
+                    """
+                    SELECT description, owner, due_date, status, position, suggested
+                    FROM issue_next_steps
+                    WHERE issue_id = ?
+                    ORDER BY position ASC, datetime(created_at) ASC
+                    """,
+                    [issue["id"]],
+                )
+                issue_payloads.append(
+                    {
+                        "id": issue["id"],
+                        "title": issue["title"],
+                        "domain": issue["domain"],
+                        "status": issue["status"],
+                        "confidence": issue["confidence"],
+                        "situation": issue["situation"],
+                        "complication": issue["complication"],
+                        "resolution": issue["resolution"],
+                        "next_steps": issue["next_steps"],
+                        "steps": steps,
+                    }
+                )
+
+            llm_result = extract_issues(
+                meeting_date=meeting["meeting_date"],
+                documents=doc_payloads,
+                existing_issues=issue_payloads,
+            )
+
+            apply_updates(conn, meeting["id"], meeting["meeting_date"], llm_result)
+
+        conn.execute(
+            """
+            INSERT INTO app_state (key, value)
+            VALUES ('last_meeting_run_end', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            [end],
+        )
+        conn.execute(
+            """
+            INSERT INTO app_state (key, value)
+            VALUES ('last_meeting_run_start', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            [start],
+        )
+        conn.commit()
+
     return RedirectResponse(url=return_to, status_code=303)
 
 

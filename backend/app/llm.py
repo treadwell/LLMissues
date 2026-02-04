@@ -137,12 +137,12 @@ def extract_issues(
             )
         steps_text = "\n".join(steps_lines) if steps_lines else "(none)"
         issue_blocks.append(
-            "Issue {id}: {title}\n"
-            "Domain: {domain} | Status: {status} | Confidence: {confidence}\n"
-            "Situation: {situation}\n"
-            "Complication: {complication}\n"
-            "Resolution: {resolution}\n"
-            "Current steps:\n{steps}\n".format(steps=steps_text, **issue)
+            f"Issue {issue['id']}: {issue['title']}\n"
+            f"Domain: {issue['domain']} | Status: {issue['status']} | Confidence: {issue['confidence']}\n"
+            f"Situation: {issue['situation']}\n"
+            f"Complication: {issue['complication']}\n"
+            f"Resolution: {issue['resolution']}\n"
+            f"Current steps:\n{steps_text}\n"
         )
 
     user_input = (
