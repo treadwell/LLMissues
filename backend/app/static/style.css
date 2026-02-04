@@ -151,6 +151,30 @@ h2 {
   margin-top: 0;
 }
 
+.inline-actions {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.option-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.option-inline input[type="text"] {
+  min-width: 220px;
+}
+
 .form-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -309,10 +333,8 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #fff;
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: flex-start;
+  display: grid;
+  gap: 0.75rem;
 }
 
 .step-item.step-suggested {
@@ -328,6 +350,41 @@ textarea {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+}
+
+.step-compact {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.step-line {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.step-line.meta {
+  flex-wrap: wrap;
+}
+
+.step-text {
+  flex: 1 1 auto;
+}
+
+.step-owner {
+  width: 160px;
+}
+
+.step-date {
+  width: 150px;
+}
+
+.step-status {
+  width: 150px;
+}
+
+.step-order {
+  width: 90px;
 }
 
 .revision-field {

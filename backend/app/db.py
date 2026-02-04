@@ -95,6 +95,18 @@ CREATE TABLE IF NOT EXISTS app_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL DEFAULT ""
 );
+
+CREATE TABLE IF NOT EXISTS domain_options (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS owner_options (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -124,6 +136,13 @@ def init_db() -> None:
                 "text_excerpt": "TEXT NOT NULL DEFAULT \"\"",
                 "text_size": "INTEGER NOT NULL DEFAULT 0",
                 "text_format": "TEXT NOT NULL DEFAULT \"\"",
+            },
+        )
+        _ensure_columns(
+            conn,
+            "issue_next_steps",
+            {
+                "position": "INTEGER NOT NULL DEFAULT 0",
             },
         )
         conn.commit()

@@ -11,13 +11,45 @@
     </label>
     <label>
       Domain
-      <input type="text" name="domain" value="{{ filters.domain }}" placeholder="Domain" />
+      <select name="domain">
+        <option value="">All</option>
+        {% for option in domain_options %}
+          <option value="{{ option.name }}" {% if filters.domain == option.name %}selected{% endif %}>{{ option.name }}</option>
+        {% endfor %}
+      </select>
     </label>
     <label>
       Owner
-      <input type="text" name="owner" value="{{ filters.owner }}" placeholder="Owner" />
+      <select name="owner">
+        <option value="">All</option>
+        {% for option in owner_options %}
+          <option value="{{ option.name }}" {% if filters.owner == option.name %}selected{% endif %}>{{ option.name }}</option>
+        {% endfor %}
+      </select>
     </label>
     <button class="secondary" type="submit">Filter</button>
     <a class="link" href="/">Reset</a>
+  </div>
+</form>
+
+<form class="form inline" action="/options/domain" method="post">
+  <div class="form-row">
+    <label>
+      Add Domain
+      <input type="text" name="name" placeholder="New domain" required />
+    </label>
+    <input type="hidden" name="return_to" value="{{ request.url.path }}" />
+    <button class="secondary" type="submit">Add</button>
+  </div>
+</form>
+
+<form class="form inline" action="/options/owner" method="post">
+  <div class="form-row">
+    <label>
+      Add Owner
+      <input type="text" name="name" placeholder="New owner" required />
+    </label>
+    <input type="hidden" name="return_to" value="{{ request.url.path }}" />
+    <button class="secondary" type="submit">Add</button>
   </div>
 </form>

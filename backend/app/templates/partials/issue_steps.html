@@ -1,4 +1,4 @@
-<form class="form inline" hx-post="/issues/{{ issue_id }}/steps" hx-target="#issue-steps" hx-swap="outerHTML">
+<form class="form inline" hx-post="/issues/{{ issue_id }}/steps" hx-target="#issue-steps" hx-swap="innerHTML">
   <div class="form-row">
     <label>
       Step
@@ -6,7 +6,12 @@
     </label>
     <label>
       Owner
-      <input type="text" name="owner" placeholder="Owner" required />
+      <select name="owner" required>
+        <option value="" disabled selected>Select owner</option>
+        {% for option in owner_options %}
+          <option value="{{ option.name }}">{{ option.name }}</option>
+        {% endfor %}
+      </select>
     </label>
     <label>
       Due Date
@@ -22,7 +27,7 @@
     </label>
     <label>
       Order
-      <input type="number" name="position" value="0" min="0" />
+      <input type="number" name="position" placeholder="(auto)" min="1" />
     </label>
     <button class="secondary" type="submit">Add Step</button>
   </div>
@@ -32,22 +37,36 @@
   <ul class="step-list">
     {% for step in steps %}
       <li class="step-item {% if step.suggested %}step-suggested{% endif %}">
-        <div class="step-main">
-          <div class="step-title">{{ step.description }}</div>
-          <div class="issue-meta">
-            <span>{{ step.status }}</span>
-            {% if step.owner %}<span>{{ step.owner }}</span>{% endif %}
-            {% if step.due_date %}<span>{{ step.due_date }}</span>{% endif %}
-            <span>Order {{ step.position }}</span>
+        <form class="step-main step-compact" hx-post="/issues/{{ issue_id }}/steps/{{ step.id }}" hx-target="#issue-steps" hx-swap="innerHTML">
+          <div class="step-line">
+            <input class="step-text" type="text" name="description" value="{{ step.description }}" required />
           </div>
-        </div>
+          <div class="step-line meta">
+            <select class="step-owner" name="owner" required>
+              {% if step.owner %}<option value="{{ step.owner }}">{{ step.owner }}</option>{% endif %}
+              {% for option in owner_options %}
+                {% if option.name != step.owner %}
+                  <option value="{{ option.name }}">{{ option.name }}</option>
+                {% endif %}
+              {% endfor %}
+            </select>
+            <input class="step-date" type="date" name="due_date" value="{{ step.due_date }}" required />
+            <select class="step-status" name="status">
+              {% for option in ["Open", "In Progress", "Blocked", "Done"] %}
+                <option value="{{ option }}" {% if step.status == option %}selected{% endif %}>{{ option }}</option>
+              {% endfor %}
+            </select>
+            <input class="step-order" type="number" name="position" value="{{ step.position }}" min="1" />
+            <button class="secondary" type="submit">Update</button>
+          </div>
+        </form>
         <div class="step-actions">
           {% if step.suggested %}
-            <form hx-post="/issues/{{ issue_id }}/steps/{{ step.id }}/accept" hx-target="#issue-steps" hx-swap="outerHTML">
+            <form hx-post="/issues/{{ issue_id }}/steps/{{ step.id }}/accept" hx-target="#issue-steps" hx-swap="innerHTML">
               <button class="secondary" type="submit">Accept</button>
             </form>
           {% endif %}
-          <form hx-post="/issues/{{ issue_id }}/steps/{{ step.id }}/delete" hx-target="#issue-steps" hx-swap="outerHTML">
+          <form hx-post="/issues/{{ issue_id }}/steps/{{ step.id }}/delete" hx-target="#issue-steps" hx-swap="innerHTML">
             <button class="link" type="submit">Delete</button>
           </form>
         </div>

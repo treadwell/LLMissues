@@ -21,11 +21,21 @@
       </label>
       <label>
         Domain
-        <input type="text" name="domain" placeholder="Operations, Risk, Product" />
+        <select name="domain">
+          <option value="General">General</option>
+          {% for option in domain_options %}
+            <option value="{{ option.name }}">{{ option.name }}</option>
+          {% endfor %}
+        </select>
       </label>
       <label>
         Owner
-        <input type="text" name="owner" placeholder="Owner" />
+        <select name="owner">
+          <option value="">Unassigned</option>
+          {% for option in owner_options %}
+            <option value="{{ option.name }}">{{ option.name }}</option>
+          {% endfor %}
+        </select>
       </label>
     </div>
     <button class="primary" type="submit">Add Issue</button>

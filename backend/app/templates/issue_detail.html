@@ -9,6 +9,28 @@
   <div id="issue-detail">
     {% include "partials/issue_detail_form.html" %}
   </div>
+  <div class="inline-actions">
+    <form class="form inline" action="/options/domain" method="post">
+      <div class="form-row">
+        <label>
+          Add Domain
+          <input type="text" name="name" placeholder="New domain" required />
+        </label>
+        <input type="hidden" name="return_to" value="{{ request.url.path }}" />
+        <button class="secondary" type="submit">Add</button>
+      </div>
+    </form>
+    <form class="form inline" action="/options/owner" method="post">
+      <div class="form-row">
+        <label>
+          Add Owner
+          <input type="text" name="name" placeholder="New owner" required />
+        </label>
+        <input type="hidden" name="return_to" value="{{ request.url.path }}" />
+        <button class="secondary" type="submit">Add</button>
+      </div>
+    </form>
+  </div>
 </section>
 
 <section class="panel">

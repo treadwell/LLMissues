@@ -39,6 +39,8 @@ async def index(
         "owner": owner.strip(),
     }
     with get_connection() as conn:
+        domain_options = _fetch_domain_options(conn)
+        owner_options = _fetch_owner_options(conn)
         query = """
             SELECT id, title, domain, status, owner, confidence, updated_at
             FROM issues
@@ -73,6 +75,8 @@ async def index(
             "issues": issues,
             "filters": filters,
             "last_meeting_run_end": last_run["value"] if last_run else None,
+            "domain_options": domain_options,
+            "owner_options": owner_options,
         },
     )
 
@@ -90,6 +94,8 @@ async def issues_list(
         "owner": owner.strip(),
     }
     with get_connection() as conn:
+        domain_options = _fetch_domain_options(conn)
+        owner_options = _fetch_owner_options(conn)
         query = """
             SELECT id, title, domain, status, owner, confidence, updated_at
             FROM issues
@@ -114,6 +120,8 @@ async def issues_list(
             "request": request,
             "issues": issues,
             "filters": filters,
+            "domain_options": domain_options,
+            "owner_options": owner_options,
         },
     )
 
@@ -128,6 +136,20 @@ def _fetch_steps(conn, issue_id: int):
         ORDER BY position ASC, datetime(created_at) ASC
         """,
         [issue_id],
+    )
+
+
+def _fetch_domain_options(conn):
+    return fetch_all(
+        conn,
+        "SELECT id, name FROM domain_options ORDER BY name COLLATE NOCASE",
+    )
+
+
+def _fetch_owner_options(conn):
+    return fetch_all(
+        conn,
+        "SELECT id, name FROM owner_options ORDER BY name COLLATE NOCASE",
     )
 
 
@@ -177,6 +199,8 @@ async def issue_detail(request: Request, issue_id: int):
             """,
             [issue_id],
         )
+        domain_options = _fetch_domain_options(conn)
+        owner_options = _fetch_owner_options(conn)
         steps = _fetch_steps(conn, issue_id)
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
@@ -189,6 +213,8 @@ async def issue_detail(request: Request, issue_id: int):
             "documents": documents,
             "available_documents": available_documents,
             "steps": steps,
+            "domain_options": domain_options,
+            "owner_options": owner_options,
         },
     )
 
@@ -202,6 +228,16 @@ async def create_issue(
 ):
     now = datetime.utcnow().isoformat(timespec="seconds")
     with get_connection() as conn:
+        if domain.strip():
+            conn.execute(
+                "INSERT OR IGNORE INTO domain_options (name, created_at) VALUES (?, ?)",
+                [domain.strip(), now],
+            )
+        if owner.strip():
+            conn.execute(
+                "INSERT OR IGNORE INTO owner_options (name, created_at) VALUES (?, ?)",
+                [owner.strip(), now],
+            )
         cur = conn.execute(
             """
             INSERT INTO issues (
@@ -302,6 +338,16 @@ async def update_issue(
                 changes[field] = {"old": str(old_value), "new": str(new_value)}
 
         now = datetime.utcnow().isoformat(timespec="seconds")
+        if updates["domain"]:
+            conn.execute(
+                "INSERT OR IGNORE INTO domain_options (name, created_at) VALUES (?, ?)",
+                [updates["domain"], now],
+            )
+        if updates["owner"]:
+            conn.execute(
+                "INSERT OR IGNORE INTO owner_options (name, created_at) VALUES (?, ?)",
+                [updates["owner"], now],
+            )
         conn.execute(
             """
             UPDATE issues
@@ -366,12 +412,30 @@ async def add_step(
 ):
     now = datetime.utcnow().isoformat(timespec="seconds")
     with get_connection() as conn:
+        max_pos_row = fetch_one(
+            conn,
+            "SELECT COALESCE(MAX(position), 0) AS max_pos FROM issue_next_steps WHERE issue_id = ?",
+            [issue_id],
+        )
+        max_pos = int(max_pos_row["max_pos"] or 0)
+        desired = int(position or 0)
+        if desired <= 0:
+            desired = max_pos + 1
+        else:
+            conn.execute(
+                """
+                UPDATE issue_next_steps
+                SET position = position + 1
+                WHERE issue_id = ? AND position >= ?
+                """,
+                [issue_id, desired],
+            )
         conn.execute(
             """
             INSERT INTO issue_next_steps (issue_id, description, owner, due_date, status, position, suggested, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            [issue_id, description.strip(), owner.strip(), due_date.strip(), status.strip(), position, 0, now, now],
+            [issue_id, description.strip(), owner.strip(), due_date.strip(), status.strip(), desired, 0, now, now],
         )
         conn.commit()
         steps = _fetch_steps(conn, issue_id)
@@ -382,6 +446,7 @@ async def add_step(
             "request": request,
             "issue_id": issue_id,
             "steps": steps,
+            "owner_options": _fetch_owner_options(conn),
         },
     )
 
@@ -407,6 +472,86 @@ async def accept_step(request: Request, issue_id: int, step_id: int):
             "request": request,
             "issue_id": issue_id,
             "steps": steps,
+            "owner_options": _fetch_owner_options(conn),
+        },
+    )
+
+
+@app.post("/issues/{issue_id}/steps/{step_id}", response_class=HTMLResponse)
+async def update_step(
+    request: Request,
+    issue_id: int,
+    step_id: int,
+    description: str = Form(...),
+    owner: str = Form(""),
+    due_date: str = Form(""),
+    status: str = Form("Open"),
+    position: int = Form(1),
+):
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with get_connection() as conn:
+        existing = fetch_one(
+            conn,
+            """
+            SELECT position FROM issue_next_steps
+            WHERE id = ? AND issue_id = ?
+            """,
+            [step_id, issue_id],
+        )
+        if not existing:
+            raise HTTPException(status_code=404, detail="Step not found")
+
+        desired = int(position or 1)
+        if desired < 1:
+            desired = 1
+
+        if desired != existing["position"]:
+            if desired > existing["position"]:
+                conn.execute(
+                    """
+                    UPDATE issue_next_steps
+                    SET position = position - 1
+                    WHERE issue_id = ? AND position > ? AND position <= ?
+                    """,
+                    [issue_id, existing["position"], desired],
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE issue_next_steps
+                    SET position = position + 1
+                    WHERE issue_id = ? AND position >= ? AND position < ?
+                    """,
+                    [issue_id, desired, existing["position"]],
+                )
+
+        conn.execute(
+            """
+            UPDATE issue_next_steps
+            SET description = ?, owner = ?, due_date = ?, status = ?, position = ?, updated_at = ?
+            WHERE id = ? AND issue_id = ?
+            """,
+            [
+                description.strip(),
+                owner.strip(),
+                due_date.strip(),
+                status.strip(),
+                desired,
+                now,
+                step_id,
+                issue_id,
+            ],
+        )
+        conn.commit()
+        steps = _fetch_steps(conn, issue_id)
+
+    return templates.TemplateResponse(
+        "partials/issue_steps.html",
+        {
+            "request": request,
+            "issue_id": issue_id,
+            "steps": steps,
+            "owner_options": _fetch_owner_options(conn),
         },
     )
 
@@ -429,8 +574,104 @@ async def delete_step(request: Request, issue_id: int, step_id: int):
             "request": request,
             "issue_id": issue_id,
             "steps": steps,
+            "owner_options": _fetch_owner_options(conn),
         },
     )
+
+
+@app.post("/options/domain")
+async def add_domain_option(request: Request, name: str = Form(...), return_to: str = Form("/")):
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO domain_options (name, created_at) VALUES (?, ?)",
+            [name.strip(), now],
+        )
+        conn.commit()
+    return RedirectResponse(url=return_to, status_code=303)
+
+
+@app.post("/options/owner")
+async def add_owner_option(request: Request, name: str = Form(...), return_to: str = Form("/")):
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO owner_options (name, created_at) VALUES (?, ?)",
+            [name.strip(), now],
+        )
+        conn.commit()
+    return RedirectResponse(url=return_to, status_code=303)
+
+
+@app.get("/options")
+async def options_index(request: Request):
+    with get_connection() as conn:
+        domains = _fetch_domain_options(conn)
+        owners = _fetch_owner_options(conn)
+    return templates.TemplateResponse(
+        "options.html",
+        {
+            "request": request,
+            "domains": domains,
+            "owners": owners,
+        },
+    )
+
+
+@app.post("/options/domain/{domain_id}")
+async def update_domain_option(
+    request: Request,
+    domain_id: int,
+    name: str = Form(...),
+    return_to: str = Form("/options"),
+):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE domain_options SET name = ? WHERE id = ?",
+            [name.strip(), domain_id],
+        )
+        conn.commit()
+    return RedirectResponse(url=return_to, status_code=303)
+
+
+@app.post("/options/owner/{owner_id}")
+async def update_owner_option(
+    request: Request,
+    owner_id: int,
+    name: str = Form(...),
+    return_to: str = Form("/options"),
+):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE owner_options SET name = ? WHERE id = ?",
+            [name.strip(), owner_id],
+        )
+        conn.commit()
+    return RedirectResponse(url=return_to, status_code=303)
+
+
+@app.post("/options/domain/{domain_id}/delete")
+async def delete_domain_option(
+    request: Request,
+    domain_id: int,
+    return_to: str = Form("/options"),
+):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM domain_options WHERE id = ?", [domain_id])
+        conn.commit()
+    return RedirectResponse(url=return_to, status_code=303)
+
+
+@app.post("/options/owner/{owner_id}/delete")
+async def delete_owner_option(
+    request: Request,
+    owner_id: int,
+    return_to: str = Form("/options"),
+):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM owner_options WHERE id = ?", [owner_id])
+        conn.commit()
+    return RedirectResponse(url=return_to, status_code=303)
 
 
 @app.post("/issues/{issue_id}/documents", response_class=HTMLResponse)

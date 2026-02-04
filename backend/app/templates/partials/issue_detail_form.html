@@ -6,11 +6,26 @@
     </label>
     <label>
       Domain
-      <input type="text" name="domain" value="{{ issue.domain }}" />
+      <select name="domain">
+        {% if issue.domain %}<option value="{{ issue.domain }}">{{ issue.domain }}</option>{% endif %}
+        {% for option in domain_options %}
+          {% if option.name != issue.domain %}
+            <option value="{{ option.name }}">{{ option.name }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
     </label>
     <label>
       Owner
-      <input type="text" name="owner" value="{{ issue.owner }}" placeholder="Owner" />
+      <select name="owner">
+        {% if issue.owner %}<option value="{{ issue.owner }}">{{ issue.owner }}</option>{% endif %}
+        <option value="">Unassigned</option>
+        {% for option in owner_options %}
+          {% if option.name != issue.owner %}
+            <option value="{{ option.name }}">{{ option.name }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
     </label>
   </div>
 

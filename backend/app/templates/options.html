@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <h2>Domains</h2>
+    <a class="secondary" href="/">Back</a>
+  </div>
+
+  <form class="form inline" action="/options/domain" method="post">
+    <div class="form-row">
+      <label>
+        Add Domain
+        <input type="text" name="name" placeholder="New domain" required />
+      </label>
+      <input type="hidden" name="return_to" value="/options" />
+      <button class="secondary" type="submit">Add</button>
+    </div>
+  </form>
+
+  {% if domains %}
+    <ul class="issue-list">
+      {% for domain in domains %}
+        <li class="issue-item">
+          <div class="option-row">
+            <form class="option-inline" action="/options/domain/{{ domain.id }}" method="post">
+              <input type="text" name="name" value="{{ domain.name }}" required />
+              <input type="hidden" name="return_to" value="/options" />
+              <button class="secondary" type="submit">Update</button>
+            </form>
+            <form class="option-inline" action="/options/domain/{{ domain.id }}/delete" method="post">
+              <input type="hidden" name="return_to" value="/options" />
+              <button class="link" type="submit">Delete</button>
+            </form>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="empty-state">No domains yet.</div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>Owners</h2>
+  </div>
+
+  <form class="form inline" action="/options/owner" method="post">
+    <div class="form-row">
+      <label>
+        Add Owner
+        <input type="text" name="name" placeholder="New owner" required />
+      </label>
+      <input type="hidden" name="return_to" value="/options" />
+      <button class="secondary" type="submit">Add</button>
+    </div>
+  </form>
+
+  {% if owners %}
+    <ul class="issue-list">
+      {% for owner in owners %}
+        <li class="issue-item">
+          <div class="option-row">
+            <form class="option-inline" action="/options/owner/{{ owner.id }}" method="post">
+              <input type="text" name="name" value="{{ owner.name }}" required />
+              <input type="hidden" name="return_to" value="/options" />
+              <button class="secondary" type="submit">Update</button>
+            </form>
+            <form class="option-inline" action="/options/owner/{{ owner.id }}/delete" method="post">
+              <input type="hidden" name="return_to" value="/options" />
+              <button class="link" type="submit">Delete</button>
+            </form>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="empty-state">No owners yet.</div>
+  {% endif %}
+</section>
+{% endblock %}
