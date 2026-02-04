@@ -298,6 +298,107 @@ def _log_revisions(conn, issue_id: int, changes: dict[str, Any], actor: str) -> 
         )
 
 
+@app.post("/issues/merge")
+async def merge_issues(
+    request: Request,
+    target_id: int | None = Form(None),
+    source_ids: str = Form(""),
+    return_to: str = Form("/"),
+):
+    if not target_id:
+        return RedirectResponse(url=return_to, status_code=303)
+
+    ids = [int(i) for i in source_ids.split(",") if i.strip().isdigit()]
+    ids = [i for i in ids if i != target_id]
+    if not ids:
+        return RedirectResponse(url=return_to, status_code=303)
+
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with get_connection() as conn:
+        target = fetch_one(conn, "SELECT * FROM issues WHERE id = ?", [target_id])
+        if not target:
+            raise HTTPException(status_code=404, detail="Target issue not found")
+
+        for source_id in ids:
+            source = fetch_one(conn, "SELECT * FROM issues WHERE id = ?", [source_id])
+            if not source:
+                continue
+
+            def merge_field(field: str, label: str) -> str:
+                if not source[field]:
+                    return target[field]
+                return (target[field] or "") + f"\n\n[Merged from #{source_id} {label}]\n" + source[field]
+
+            target_update = {
+                "situation": merge_field("situation", "Situation"),
+                "complication": merge_field("complication", "Complication"),
+                "resolution": merge_field("resolution", "Resolution"),
+                "next_steps": merge_field("next_steps", "Next steps"),
+            }
+
+            for field, new_value in target_update.items():
+                if str(target[field]) != str(new_value):
+                    conn.execute(
+                        """
+                        INSERT INTO issue_revisions (issue_id, field, old_value, new_value, actor, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        [target_id, field, str(target[field]), str(new_value), "merge", now],
+                    )
+
+            conn.execute(
+                """
+                UPDATE issues
+                SET situation = ?, complication = ?, resolution = ?, next_steps = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                [
+                    target_update["situation"],
+                    target_update["complication"],
+                    target_update["resolution"],
+                    target_update["next_steps"],
+                    now,
+                    target_id,
+                ],
+            )
+
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO issue_document_links (issue_id, document_id)
+                SELECT ?, document_id FROM issue_document_links WHERE issue_id = ?
+                """,
+                [target_id, source_id],
+            )
+            conn.execute(
+                "DELETE FROM issue_document_links WHERE issue_id = ?",
+                [source_id],
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO issue_meeting_links (issue_id, meeting_id)
+                SELECT ?, meeting_id FROM issue_meeting_links WHERE issue_id = ?
+                """,
+                [target_id, source_id],
+            )
+            conn.execute(
+                "DELETE FROM issue_meeting_links WHERE issue_id = ?",
+                [source_id],
+            )
+            conn.execute(
+                "UPDATE issue_next_steps SET issue_id = ? WHERE issue_id = ?",
+                [target_id, source_id],
+            )
+            conn.execute(
+                "UPDATE issue_revisions SET issue_id = ? WHERE issue_id = ?",
+                [target_id, source_id],
+            )
+            conn.execute("DELETE FROM issues WHERE id = ?", [source_id])
+
+        conn.commit()
+
+    return RedirectResponse(url=return_to, status_code=303)
+
+
 @app.post("/issues/{issue_id}", response_class=HTMLResponse)
 async def update_issue(
     request: Request,
@@ -411,90 +512,6 @@ async def delete_issue(request: Request, issue_id: int, return_to: str = Form("/
         conn.execute("DELETE FROM issue_revisions WHERE issue_id = ?", [issue_id])
         conn.execute("DELETE FROM issues WHERE id = ?", [issue_id])
         conn.commit()
-    return RedirectResponse(url=return_to, status_code=303)
-
-
-@app.post("/issues/merge")
-async def merge_issues(
-    request: Request,
-    target_id: int = Form(...),
-    source_ids: str = Form(""),
-    return_to: str = Form("/"),
-):
-    ids = [int(i) for i in source_ids.split(",") if i.strip().isdigit()]
-    ids = [i for i in ids if i != target_id]
-    if not ids:
-        return RedirectResponse(url=return_to, status_code=303)
-
-    now = datetime.utcnow().isoformat(timespec="seconds")
-    with get_connection() as conn:
-        target = fetch_one(conn, "SELECT * FROM issues WHERE id = ?", [target_id])
-        if not target:
-            raise HTTPException(status_code=404, detail="Target issue not found")
-
-        for source_id in ids:
-            source = fetch_one(conn, "SELECT * FROM issues WHERE id = ?", [source_id])
-            if not source:
-                continue
-
-            def merge_field(field: str, label: str) -> str:
-                if not source[field]:
-                    return target[field]
-                return (target[field] or "") + f"\n\n[Merged from #{source_id} {label}]\n" + source[field]
-
-            target_update = {
-                "situation": merge_field("situation", "Situation"),
-                "complication": merge_field("complication", "Complication"),
-                "resolution": merge_field("resolution", "Resolution"),
-                "next_steps": merge_field("next_steps", "Next steps"),
-            }
-
-            for field, new_value in target_update.items():
-                if str(target[field]) != str(new_value):
-                    conn.execute(
-                        """
-                        INSERT INTO issue_revisions (issue_id, field, old_value, new_value, actor, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        [target_id, field, str(target[field]), str(new_value), "merge", now],
-                    )
-
-            conn.execute(
-                """
-                UPDATE issues
-                SET situation = ?, complication = ?, resolution = ?, next_steps = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                [
-                    target_update["situation"],
-                    target_update["complication"],
-                    target_update["resolution"],
-                    target_update["next_steps"],
-                    now,
-                    target_id,
-                ],
-            )
-
-            conn.execute(
-                "UPDATE issue_document_links SET issue_id = ? WHERE issue_id = ?",
-                [target_id, source_id],
-            )
-            conn.execute(
-                "UPDATE issue_meeting_links SET issue_id = ? WHERE issue_id = ?",
-                [target_id, source_id],
-            )
-            conn.execute(
-                "UPDATE issue_next_steps SET issue_id = ? WHERE issue_id = ?",
-                [target_id, source_id],
-            )
-            conn.execute(
-                "UPDATE issue_revisions SET issue_id = ? WHERE issue_id = ?",
-                [target_id, source_id],
-            )
-            conn.execute("DELETE FROM issues WHERE id = ?", [source_id])
-
-        conn.commit()
-
     return RedirectResponse(url=return_to, status_code=303)
 
 
