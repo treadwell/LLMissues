@@ -66,12 +66,39 @@ def merge_delta(existing: str, delta: str, label: str, meeting_date: str) -> str
     return (existing or "") + prefix + delta
 
 
-def build_suggested(existing: str, delta: str, meeting_date: str) -> str:
-    delta = (delta or "").strip()
-    if not delta:
-        return existing or ""
-    prefix = f"\n\n[Suggested next steps from meeting {meeting_date}]\n"
-    return (existing or "") + prefix + delta
+def _next_position(conn, issue_id: int) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(MAX(position), 0) AS max_pos FROM issue_next_steps WHERE issue_id = ?",
+        [issue_id],
+    ).fetchone()
+    return int(row["max_pos"] or 0)
+
+
+def insert_suggested_steps(conn, issue_id: int, steps: list[dict[str, str]]) -> None:
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    position = _next_position(conn, issue_id)
+    for step in steps:
+        description = (step.get("description") or "").strip()
+        if not description:
+            continue
+        position += 1
+        conn.execute(
+            """
+            INSERT INTO issue_next_steps (issue_id, description, owner, due_date, status, position, suggested, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                issue_id,
+                description,
+                (step.get("owner") or "").strip(),
+                (step.get("due_date") or "").strip(),
+                (step.get("status") or "Open").strip(),
+                position,
+                1,
+                now,
+                now,
+            ],
+        )
 
 
 def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
@@ -93,12 +120,13 @@ def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
                 issue["situation"].strip(),
                 issue["complication"].strip(),
                 issue["resolution"].strip(),
-                issue["next_steps"].strip(),
+                "",
                 now,
                 now,
             ],
         )
         issue_id = cur.lastrowid
+        insert_suggested_steps(conn, issue_id, issue["suggested_steps"])
 
         conn.execute(
             """
@@ -132,11 +160,6 @@ def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
         new_complication = merge_delta(existing["complication"], update["complication_delta"], "Complication", meeting_date)
         new_resolution = merge_delta(existing["resolution"], update["resolution_delta"], "Resolution", meeting_date)
         new_next_steps = existing["next_steps"]
-        new_suggested = build_suggested(
-            existing["suggested_next_steps"],
-            update["next_steps_delta"],
-            meeting_date,
-        )
 
         changes = {}
         for field, new_value in {
@@ -148,7 +171,6 @@ def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
             "complication": new_complication,
             "resolution": new_resolution,
             "next_steps": new_next_steps,
-            "suggested_next_steps": new_suggested,
         }.items():
             if str(existing[field]) != str(new_value):
                 changes[field] = {"old": str(existing[field]), "new": str(new_value)}
@@ -159,7 +181,6 @@ def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
             UPDATE issues
             SET title = ?, domain = ?, status = ?, confidence = ?,
                 situation = ?, complication = ?, resolution = ?, next_steps = ?,
-                suggested_next_steps = ?,
                 updated_at = ?
             WHERE id = ?
             """,
@@ -172,7 +193,6 @@ def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
                 new_complication,
                 new_resolution,
                 new_next_steps,
-                new_suggested,
                 now,
                 issue_id,
             ],
@@ -203,6 +223,8 @@ def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
                 """,
                 [issue_id, doc_id],
             )
+
+        insert_suggested_steps(conn, issue_id, update["suggested_steps"])
 
 
 def main() -> None:
@@ -276,8 +298,7 @@ def main() -> None:
             issues = fetch_all(
                 conn,
                 """
-                SELECT id, title, domain, status, confidence, situation, complication, resolution, next_steps,
-                       suggested_next_steps
+                SELECT id, title, domain, status, confidence, situation, complication, resolution, next_steps
                 FROM issues
                 ORDER BY datetime(updated_at) DESC
                 LIMIT ?
@@ -295,7 +316,15 @@ def main() -> None:
                     "complication": issue["complication"],
                     "resolution": issue["resolution"],
                     "next_steps": issue["next_steps"],
-                    "suggested_next_steps": issue["suggested_next_steps"],
+                    "steps": conn.execute(
+                        """
+                        SELECT description, owner, due_date, status, position, suggested
+                        FROM issue_next_steps
+                        WHERE issue_id = ?
+                        ORDER BY position ASC, datetime(created_at) ASC
+                        """,
+                        [issue["id"]],
+                    ).fetchall(),
                 }
                 for issue in issues
             ]

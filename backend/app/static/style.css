@@ -296,6 +296,40 @@ textarea {
   background: #fff;
 }
 
+.step-list {
+  list-style: none;
+  padding: 0;
+  margin: 1.5rem 0 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.step-item {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.step-item.step-suggested {
+  border-style: dashed;
+}
+
+.step-title {
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.step-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .revision-field {
   font-weight: 600;
 }

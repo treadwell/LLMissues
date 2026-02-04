@@ -77,6 +77,20 @@ CREATE TABLE IF NOT EXISTS meeting_document_links (
     FOREIGN KEY(document_id) REFERENCES documents(id)
 );
 
+CREATE TABLE IF NOT EXISTS issue_next_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_id INTEGER NOT NULL,
+    description TEXT NOT NULL,
+    owner TEXT NOT NULL DEFAULT "",
+    due_date TEXT NOT NULL DEFAULT "",
+    status TEXT NOT NULL DEFAULT "Open",
+    position INTEGER NOT NULL DEFAULT 0,
+    suggested INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(issue_id) REFERENCES issues(id)
+);
+
 CREATE TABLE IF NOT EXISTS app_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL DEFAULT ""

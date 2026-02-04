@@ -1,0 +1,59 @@
+<form class="form inline" hx-post="/issues/{{ issue_id }}/steps" hx-target="#issue-steps" hx-swap="outerHTML">
+  <div class="form-row">
+    <label>
+      Step
+      <input type="text" name="description" placeholder="Describe the step" required />
+    </label>
+    <label>
+      Owner
+      <input type="text" name="owner" placeholder="Owner" required />
+    </label>
+    <label>
+      Due Date
+      <input type="date" name="due_date" required />
+    </label>
+    <label>
+      Status
+      <select name="status">
+        {% for option in ["Open", "In Progress", "Blocked", "Done"] %}
+          <option value="{{ option }}">{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Order
+      <input type="number" name="position" value="0" min="0" />
+    </label>
+    <button class="secondary" type="submit">Add Step</button>
+  </div>
+</form>
+
+{% if steps %}
+  <ul class="step-list">
+    {% for step in steps %}
+      <li class="step-item {% if step.suggested %}step-suggested{% endif %}">
+        <div class="step-main">
+          <div class="step-title">{{ step.description }}</div>
+          <div class="issue-meta">
+            <span>{{ step.status }}</span>
+            {% if step.owner %}<span>{{ step.owner }}</span>{% endif %}
+            {% if step.due_date %}<span>{{ step.due_date }}</span>{% endif %}
+            <span>Order {{ step.position }}</span>
+          </div>
+        </div>
+        <div class="step-actions">
+          {% if step.suggested %}
+            <form hx-post="/issues/{{ issue_id }}/steps/{{ step.id }}/accept" hx-target="#issue-steps" hx-swap="outerHTML">
+              <button class="secondary" type="submit">Accept</button>
+            </form>
+          {% endif %}
+          <form hx-post="/issues/{{ issue_id }}/steps/{{ step.id }}/delete" hx-target="#issue-steps" hx-swap="outerHTML">
+            <button class="link" type="submit">Delete</button>
+          </form>
+        </div>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <div class="empty-state">No next steps yet.</div>
+{% endif %}

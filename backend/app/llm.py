@@ -30,7 +30,20 @@ def _schema() -> dict[str, Any]:
                         "situation": {"type": "string"},
                         "complication": {"type": "string"},
                         "resolution": {"type": "string"},
-                        "next_steps": {"type": "string"},
+                        "suggested_steps": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "description": {"type": "string"},
+                                    "owner": {"type": "string"},
+                                    "due_date": {"type": "string"},
+                                    "status": {"type": "string"},
+                                },
+                                "required": ["description", "owner", "due_date", "status"],
+                            },
+                        },
                         "document_ids": {"type": "array", "items": {"type": "integer"}},
                     },
                     "required": [
@@ -40,7 +53,7 @@ def _schema() -> dict[str, Any]:
                         "situation",
                         "complication",
                         "resolution",
-                        "next_steps",
+                        "suggested_steps",
                         "document_ids",
                     ],
                 },
@@ -59,7 +72,20 @@ def _schema() -> dict[str, Any]:
                         "situation_delta": {"type": "string"},
                         "complication_delta": {"type": "string"},
                         "resolution_delta": {"type": "string"},
-                        "next_steps_delta": {"type": "string"},
+                        "suggested_steps": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "description": {"type": "string"},
+                                    "owner": {"type": "string"},
+                                    "due_date": {"type": "string"},
+                                    "status": {"type": "string"},
+                                },
+                                "required": ["description", "owner", "due_date", "status"],
+                            },
+                        },
                         "document_ids": {"type": "array", "items": {"type": "integer"}},
                     },
                     "required": [
@@ -71,7 +97,7 @@ def _schema() -> dict[str, Any]:
                         "situation_delta",
                         "complication_delta",
                         "resolution_delta",
-                        "next_steps_delta",
+                        "suggested_steps",
                         "document_ids",
                     ],
                 },
@@ -90,7 +116,8 @@ def extract_issues(
 
     instructions = (
         "You analyze meeting transcripts and update an issue register using the SCR framework. "
-        "You must return JSON that exactly matches the schema."
+        "You must return JSON that exactly matches the schema. "
+        "Suggested steps must include description, owner, due_date (YYYY-MM-DD or empty), and status."
     )
 
     doc_blocks = []
@@ -103,14 +130,19 @@ def extract_issues(
 
     issue_blocks = []
     for issue in existing_issues:
+        steps_lines = []
+        for step in issue.get("steps", []):
+            steps_lines.append(
+                f"- {step['description']} | {step['owner']} | {step['due_date']} | {step['status']}"
+            )
+        steps_text = "\n".join(steps_lines) if steps_lines else "(none)"
         issue_blocks.append(
             "Issue {id}: {title}\n"
             "Domain: {domain} | Status: {status} | Confidence: {confidence}\n"
             "Situation: {situation}\n"
             "Complication: {complication}\n"
             "Resolution: {resolution}\n"
-            "Next steps: {next_steps}\n"
-            "Suggested next steps: {suggested_next_steps}\n".format(**issue)
+            "Current steps:\n{steps}\n".format(steps=steps_text, **issue)
         )
 
     user_input = (
@@ -121,7 +153,7 @@ def extract_issues(
         f"{''.join(doc_blocks)}\n\n"
         "Tasks:\n"
         "1) Identify new issues that are not covered by existing issues.\n"
-        "2) For existing issues, provide deltas to add to SCR and next steps.\n"
+        "2) For existing issues, provide deltas to add to SCR and suggested next steps.\n"
         "3) For updates, choose the best matching issue_id.\n"
         "4) Use document_ids from the documents list for evidence.\n"
         "5) Be conservative: only create issues if clearly distinct.\n"

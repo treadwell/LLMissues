@@ -118,6 +118,19 @@ async def issues_list(
     )
 
 
+def _fetch_steps(conn, issue_id: int):
+    return fetch_all(
+        conn,
+        """
+        SELECT id, issue_id, description, owner, due_date, status, position, suggested, created_at
+        FROM issue_next_steps
+        WHERE issue_id = ?
+        ORDER BY position ASC, datetime(created_at) ASC
+        """,
+        [issue_id],
+    )
+
+
 @app.get("/issues/{issue_id}")
 async def issue_detail(request: Request, issue_id: int):
     with get_connection() as conn:
@@ -164,6 +177,7 @@ async def issue_detail(request: Request, issue_id: int):
             """,
             [issue_id],
         )
+        steps = _fetch_steps(conn, issue_id)
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
     return templates.TemplateResponse(
@@ -174,6 +188,7 @@ async def issue_detail(request: Request, issue_id: int):
             "revisions": revisions,
             "documents": documents,
             "available_documents": available_documents,
+            "steps": steps,
         },
     )
 
@@ -257,8 +272,6 @@ async def update_issue(
     situation: str = Form(""),
     complication: str = Form(""),
     resolution: str = Form(""),
-    next_steps: str = Form(""),
-    suggested_next_steps: str = Form(""),
 ):
     with get_connection() as conn:
         existing = fetch_one(
@@ -280,8 +293,6 @@ async def update_issue(
             "situation": situation.strip(),
             "complication": complication.strip(),
             "resolution": resolution.strip(),
-            "next_steps": next_steps.strip(),
-            "suggested_next_steps": suggested_next_steps.strip(),
         }
 
         changes: dict[str, Any] = {}
@@ -295,8 +306,7 @@ async def update_issue(
             """
             UPDATE issues
             SET title = ?, domain = ?, owner = ?, status = ?, confidence = ?,
-                situation = ?, complication = ?, resolution = ?, next_steps = ?,
-                suggested_next_steps = ?,
+                situation = ?, complication = ?, resolution = ?,
                 updated_at = ?
             WHERE id = ?
             """,
@@ -309,8 +319,6 @@ async def update_issue(
                 updates["situation"],
                 updates["complication"],
                 updates["resolution"],
-                updates["next_steps"],
-                updates["suggested_next_steps"],
                 now,
                 issue_id,
             ],
@@ -346,86 +354,81 @@ async def update_issue(
     )
 
 
-@app.post("/issues/{issue_id}/accept-next-steps", response_class=HTMLResponse)
-async def accept_next_steps(request: Request, issue_id: int):
+@app.post("/issues/{issue_id}/steps", response_class=HTMLResponse)
+async def add_step(
+    request: Request,
+    issue_id: int,
+    description: str = Form(...),
+    owner: str = Form(""),
+    due_date: str = Form(""),
+    status: str = Form("Open"),
+    position: int = Form(0),
+):
+    now = datetime.utcnow().isoformat(timespec="seconds")
     with get_connection() as conn:
-        issue = fetch_one(
-            conn,
-            """
-            SELECT * FROM issues WHERE id = ?
-            """,
-            [issue_id],
-        )
-        if not issue:
-            raise HTTPException(status_code=404, detail="Issue not found")
-
-        suggested = (issue["suggested_next_steps"] or "").strip()
-        if not suggested:
-            return templates.TemplateResponse(
-                "partials/issue_detail_form.html",
-                {
-                    "request": request,
-                    "issue": issue,
-                    "saved": False,
-                },
-            )
-
-        now = datetime.utcnow().isoformat(timespec="seconds")
-        updated_next_steps = (issue["next_steps"] or "")
-        if updated_next_steps:
-            updated_next_steps = f"{updated_next_steps}\n\n{suggested}"
-        else:
-            updated_next_steps = suggested
-
         conn.execute(
             """
-            UPDATE issues
-            SET next_steps = ?, suggested_next_steps = ?, updated_at = ?
-            WHERE id = ?
+            INSERT INTO issue_next_steps (issue_id, description, owner, due_date, status, position, suggested, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            [updated_next_steps, "", now, issue_id],
-        )
-        conn.execute(
-            """
-            INSERT INTO issue_revisions (issue_id, field, old_value, new_value, actor, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            [issue_id, "next_steps", issue["next_steps"], updated_next_steps, "user", now],
-        )
-        conn.execute(
-            """
-            INSERT INTO issue_revisions (issue_id, field, old_value, new_value, actor, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            [issue_id, "suggested_next_steps", issue["suggested_next_steps"], "", "user", now],
+            [issue_id, description.strip(), owner.strip(), due_date.strip(), status.strip(), position, 0, now, now],
         )
         conn.commit()
-
-        updated_issue = fetch_one(
-            conn,
-            """
-            SELECT * FROM issues WHERE id = ?
-            """,
-            [issue_id],
-        )
-        revisions = fetch_all(
-            conn,
-            """
-            SELECT field, old_value, new_value, actor, created_at
-            FROM issue_revisions
-            WHERE issue_id = ?
-            ORDER BY datetime(created_at) DESC
-            """,
-            [issue_id],
-        )
+        steps = _fetch_steps(conn, issue_id)
 
     return templates.TemplateResponse(
-        "partials/issue_detail_form.html",
+        "partials/issue_steps.html",
         {
             "request": request,
-            "issue": updated_issue,
-            "revisions": revisions,
-            "saved": True,
+            "issue_id": issue_id,
+            "steps": steps,
+        },
+    )
+
+
+@app.post("/issues/{issue_id}/steps/{step_id}/accept", response_class=HTMLResponse)
+async def accept_step(request: Request, issue_id: int, step_id: int):
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE issue_next_steps
+            SET suggested = 0, updated_at = ?
+            WHERE id = ? AND issue_id = ?
+            """,
+            [now, step_id, issue_id],
+        )
+        conn.commit()
+        steps = _fetch_steps(conn, issue_id)
+
+    return templates.TemplateResponse(
+        "partials/issue_steps.html",
+        {
+            "request": request,
+            "issue_id": issue_id,
+            "steps": steps,
+        },
+    )
+
+
+@app.post("/issues/{issue_id}/steps/{step_id}/delete", response_class=HTMLResponse)
+async def delete_step(request: Request, issue_id: int, step_id: int):
+    with get_connection() as conn:
+        conn.execute(
+            """
+            DELETE FROM issue_next_steps WHERE id = ? AND issue_id = ?
+            """,
+            [step_id, issue_id],
+        )
+        conn.commit()
+        steps = _fetch_steps(conn, issue_id)
+
+    return templates.TemplateResponse(
+        "partials/issue_steps.html",
+        {
+            "request": request,
+            "issue_id": issue_id,
+            "steps": steps,
         },
     )
 

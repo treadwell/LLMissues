@@ -45,28 +45,10 @@
     <textarea name="resolution" rows="4">{{ issue.resolution }}</textarea>
   </label>
 
-  <label>
-    Next Steps
-    <textarea name="next_steps" rows="3">{{ issue.next_steps }}</textarea>
-  </label>
-
-  <label>
-    Suggested Next Steps (LLM)
-    <textarea name="suggested_next_steps" rows="3" placeholder="LLM suggestions">{{ issue.suggested_next_steps }}</textarea>
-  </label>
-
   <div class="form-actions">
     <button class="primary" type="submit">Save</button>
     {% if saved %}
       <span class="saved">Saved</span>
     {% endif %}
   </div>
-
-  {% if issue.suggested_next_steps %}
-    <div class="form-actions">
-      <form hx-post="/issues/{{ issue.id }}/accept-next-steps" hx-target="#issue-detail" hx-swap="outerHTML">
-        <button class="secondary" type="submit">Accept Suggested Next Steps</button>
-      </form>
-    </div>
-  {% endif %}
 </form>
