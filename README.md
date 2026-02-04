@@ -17,6 +17,10 @@ uvicorn app.main:app --reload
 
 Then open: http://127.0.0.1:8000
 
+## Environment
+
+Copy `.env.example` to `.env` and fill in values as needed.
+
 ## Structure
 
 - `backend/` FastAPI server + HTMX templates

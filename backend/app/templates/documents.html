@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <h2>Documents</h2>
+    <a class="secondary" href="/">Back</a>
+  </div>
+  {% if documents %}
+    <ul class="issue-list">
+      {% for document in documents %}
+        <li class="issue-item">
+          <div class="issue-title">
+            <a href="/documents/{{ document.id }}">{{ document.title }}</a>
+          </div>
+          <div class="issue-meta">
+            <span>{{ document.created_at }}</span>
+            <span>{{ document.linked_issues }} issues</span>
+            {% if document.text_size %}<span>{{ document.text_size }} chars</span>{% endif %}
+            {% if document.text_format %}<span>{{ document.text_format }}</span>{% endif %}
+          </div>
+          <div class="issue-meta mono">{{ document.path }}</div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="empty-state">No documents ingested yet.</div>
+  {% endif %}
+</section>
+{% endblock %}

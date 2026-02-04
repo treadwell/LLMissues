@@ -1,0 +1,37 @@
+<form class="form inline" hx-post="/issues/{{ issue_id }}/documents" hx-target="#issue-documents" hx-swap="outerHTML">
+  <div class="form-row">
+    <label>
+      Add Document
+      <select name="document_id" required>
+        <option value="" selected disabled>Select a document</option>
+        {% for document in available_documents %}
+          <option value="{{ document.id }}">{{ document.title }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="secondary" type="submit">Link</button>
+  </div>
+</form>
+
+{% if documents %}
+  <ul class="issue-list">
+    {% for document in documents %}
+      <li class="issue-item">
+        <div class="issue-title">
+          <a href="/documents/{{ document.id }}">{{ document.title }}</a>
+        </div>
+        <div class="issue-meta">
+          <span>{{ document.created_at }}</span>
+          {% if document.text_size %}<span>{{ document.text_size }} chars</span>{% endif %}
+          {% if document.text_format %}<span>{{ document.text_format }}</span>{% endif %}
+        </div>
+        <div class="issue-meta mono">{{ document.path }}</div>
+        <form hx-post="/issues/{{ issue_id }}/documents/{{ document.id }}/remove" hx-target="#issue-documents" hx-swap="outerHTML">
+          <button class="link" type="submit">Remove</button>
+        </form>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <div class="empty-state">No linked documents yet.</div>
+{% endif %}

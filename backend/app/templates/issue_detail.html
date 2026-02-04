@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <h2>Issue Detail</h2>
+    <a class="secondary" href="/">Back</a>
+  </div>
+  <div id="issue-detail">
+    {% include "partials/issue_detail_form.html" %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>Linked Documents</h2>
+  </div>
+  <div id="issue-documents">
+    {% include "partials/issue_documents.html" %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>Revision History</h2>
+  </div>
+  {% if revisions %}
+    <ul class="revision-list">
+      {% for revision in revisions %}
+        <li class="revision-item">
+          <div class="revision-field">{{ revision.field }}</div>
+          <div class="revision-meta">
+            {{ revision.actor }} · {{ revision.created_at }}
+          </div>
+          <div class="revision-values">
+            <div class="revision-old">{{ revision.old_value }}</div>
+            <div class="revision-new">{{ revision.new_value }}</div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="empty-state">No revisions yet.</div>
+  {% endif %}
+</section>
+{% endblock %}

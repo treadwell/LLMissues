@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <h2>Document</h2>
+    <a class="secondary" href="/documents">Back</a>
+  </div>
+  <div class="document-header">
+    <h3>{{ document.title }}</h3>
+    <div class="issue-meta mono">{{ document.path }}</div>
+    <div class="issue-meta">
+      <span>{{ document.created_at }}</span>
+      <span>{{ document.linked_issues }} linked issues</span>
+      {% if document.text_size %}<span>{{ document.text_size }} chars</span>{% endif %}
+      {% if document.text_format %}<span>{{ document.text_format }}</span>{% endif %}
+    </div>
+    {% if document.tags %}
+      <div class="tag-list">
+        {% for tag in document.tags.split(',') %}
+          <span class="tag">{{ tag }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+</section>
+
+{% if document.text_excerpt %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>Excerpt</h2>
+    </div>
+    <pre class="excerpt">{{ document.text_excerpt }}</pre>
+  </section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>Linked Issues</h2>
+  </div>
+  {% if issues %}
+    <ul class="issue-list">
+      {% for issue in issues %}
+        <li class="issue-item">
+          <div class="issue-title">
+            <a href="/issues/{{ issue.id }}">{{ issue.title }}</a>
+          </div>
+          <div class="issue-meta">
+            <span class="status-badge status-{{ issue.status|lower }}">{{ issue.status }}</span>
+            <span>{{ issue.domain }}</span>
+            <span>{{ "%.2f"|format(issue.confidence) }}</span>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="empty-state">No linked issues yet.</div>
+  {% endif %}
+</section>
+{% endblock %}

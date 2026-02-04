@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <h2>Meetings</h2>
+    <a class="secondary" href="/">Back</a>
+  </div>
+  {% if meetings %}
+    <ul class="issue-list">
+      {% for meeting in meetings %}
+        <li class="issue-item">
+          <div class="issue-title">
+            <a href="/meetings/{{ meeting.id }}">{{ meeting.meeting_date }} · {{ meeting.title }}</a>
+          </div>
+          <div class="issue-meta">
+            <span>{{ meeting.document_count }} documents</span>
+            <span>{{ meeting.source_tag }}</span>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="empty-state">No meetings ingested yet.</div>
+  {% endif %}
+</section>
+{% endblock %}

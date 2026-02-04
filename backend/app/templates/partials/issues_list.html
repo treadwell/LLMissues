@@ -1,0 +1,12 @@
+{% if issues %}
+  <ul class="issue-list">
+    {% for issue in issues %}
+      {% include "partials/issue_row.html" %}
+    {% endfor %}
+  </ul>
+{% else %}
+  <div class="empty-state">
+    <p>No issues yet.</p>
+    <p>Ingest documents or add a new issue to get started.</p>
+  </div>
+{% endif %}

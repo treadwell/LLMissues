@@ -15,6 +15,7 @@
 - `issues`
 - `issue_revisions`
 - `documents`
-- `issue_document_links`
 - `meetings`
+- `issue_document_links`
 - `issue_meeting_links`
+- `meeting_document_links`

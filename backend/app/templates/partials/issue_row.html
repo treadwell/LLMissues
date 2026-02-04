@@ -1,0 +1,10 @@
+<li class="issue-item">
+  <div class="issue-title">
+    <a href="/issues/{{ issue.id }}">{{ issue.title }}</a>
+  </div>
+  <div class="issue-meta">
+    <span class="status-badge status-{{ issue.status|lower }}">{{ issue.status }}</span>
+    <span>{{ issue.domain }}</span>
+    <span>{{ "%.2f"|format(issue.confidence) }}</span>
+  </div>
+</li>
