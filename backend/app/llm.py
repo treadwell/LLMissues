@@ -15,73 +15,69 @@ class LLMResult:
 
 def _schema() -> dict[str, Any]:
     return {
-        "name": "issue_extraction",
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "new_issues": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "title": {"type": "string"},
-                            "domain": {"type": "string"},
-                            "confidence": {"type": "number"},
-                            "situation": {"type": "string"},
-                            "complication": {"type": "string"},
-                            "resolution": {"type": "string"},
-                            "next_steps": {"type": "string"},
-                            "document_ids": {"type": "array", "items": {"type": "integer"}},
-                        },
-                        "required": [
-                            "title",
-                            "domain",
-                            "confidence",
-                            "situation",
-                            "complication",
-                            "resolution",
-                            "next_steps",
-                            "document_ids",
-                        ],
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "new_issues": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "title": {"type": "string"},
+                        "domain": {"type": "string"},
+                        "confidence": {"type": "number"},
+                        "situation": {"type": "string"},
+                        "complication": {"type": "string"},
+                        "resolution": {"type": "string"},
+                        "next_steps": {"type": "string"},
+                        "document_ids": {"type": "array", "items": {"type": "integer"}},
                     },
-                },
-                "updates": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "issue_id": {"type": "integer"},
-                            "title": {"type": "string"},
-                            "domain": {"type": "string"},
-                            "status": {"type": "string"},
-                            "confidence": {"type": "number"},
-                            "situation_delta": {"type": "string"},
-                            "complication_delta": {"type": "string"},
-                            "resolution_delta": {"type": "string"},
-                            "next_steps_delta": {"type": "string"},
-                            "document_ids": {"type": "array", "items": {"type": "integer"}},
-                        },
-                        "required": [
-                            "issue_id",
-                            "title",
-                            "domain",
-                            "status",
-                            "confidence",
-                            "situation_delta",
-                            "complication_delta",
-                            "resolution_delta",
-                            "next_steps_delta",
-                            "document_ids",
-                        ],
-                    },
+                    "required": [
+                        "title",
+                        "domain",
+                        "confidence",
+                        "situation",
+                        "complication",
+                        "resolution",
+                        "next_steps",
+                        "document_ids",
+                    ],
                 },
             },
-            "required": ["new_issues", "updates"],
+            "updates": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "issue_id": {"type": "integer"},
+                        "title": {"type": "string"},
+                        "domain": {"type": "string"},
+                        "status": {"type": "string"},
+                        "confidence": {"type": "number"},
+                        "situation_delta": {"type": "string"},
+                        "complication_delta": {"type": "string"},
+                        "resolution_delta": {"type": "string"},
+                        "next_steps_delta": {"type": "string"},
+                        "document_ids": {"type": "array", "items": {"type": "integer"}},
+                    },
+                    "required": [
+                        "issue_id",
+                        "title",
+                        "domain",
+                        "status",
+                        "confidence",
+                        "situation_delta",
+                        "complication_delta",
+                        "resolution_delta",
+                        "next_steps_delta",
+                        "document_ids",
+                    ],
+                },
+            },
         },
-        "strict": True,
+        "required": ["new_issues", "updates"],
     }
 
 
@@ -131,20 +127,39 @@ def extract_issues(
         "6) Provide confidence from 0 to 1.\n"
     )
 
-    response = client.responses.create(
+    tool_schema = _schema()
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "issue_extraction",
+                "description": "Extract new issues and updates with SCR deltas.",
+                "parameters": tool_schema,
+                "strict": True,
+            },
+        }
+    ]
+
+    response = client.chat.completions.create(
         model=MODEL,
-        instructions=instructions,
-        input=user_input,
-        text={"format": {"type": "json_schema", **_schema()}},
-        reasoning={"effort": "low"},
+        messages=[
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": user_input},
+        ],
+        tools=tools,
+        tool_choice={"type": "function", "function": {"name": "issue_extraction"}},
+        temperature=0.2,
     )
 
-    if getattr(response, "refusal", None):
-        raise RuntimeError(f"Model refused: {response.refusal}")
+    message = response.choices[0].message
+    if getattr(message, "refusal", None):
+        raise RuntimeError(f"Model refused: {message.refusal}")
 
-    output_text = getattr(response, "output_text", None)
-    if not output_text:
-        raise RuntimeError("No output_text returned from model")
-
-    payload = json.loads(output_text)
+    if message.tool_calls:
+        arguments = message.tool_calls[0].function.arguments
+        payload = json.loads(arguments)
+    else:
+        if not message.content:
+            raise RuntimeError("No tool call or content returned from model")
+        payload = json.loads(message.content)
     return LLMResult(new_issues=payload["new_issues"], updates=payload["updates"])
