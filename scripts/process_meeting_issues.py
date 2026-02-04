@@ -66,6 +66,14 @@ def merge_delta(existing: str, delta: str, label: str, meeting_date: str) -> str
     return (existing or "") + prefix + delta
 
 
+def build_suggested(existing: str, delta: str, meeting_date: str) -> str:
+    delta = (delta or "").strip()
+    if not delta:
+        return existing or ""
+    prefix = f"\n\n[Suggested next steps from meeting {meeting_date}]\n"
+    return (existing or "") + prefix + delta
+
+
 def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
     for issue in llm_result.new_issues:
         now = datetime.utcnow().isoformat(timespec="seconds")
@@ -123,7 +131,12 @@ def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
         new_situation = merge_delta(existing["situation"], update["situation_delta"], "Situation", meeting_date)
         new_complication = merge_delta(existing["complication"], update["complication_delta"], "Complication", meeting_date)
         new_resolution = merge_delta(existing["resolution"], update["resolution_delta"], "Resolution", meeting_date)
-        new_next_steps = merge_delta(existing["next_steps"], update["next_steps_delta"], "Next steps", meeting_date)
+        new_next_steps = existing["next_steps"]
+        new_suggested = build_suggested(
+            existing["suggested_next_steps"],
+            update["next_steps_delta"],
+            meeting_date,
+        )
 
         changes = {}
         for field, new_value in {
@@ -135,6 +148,7 @@ def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
             "complication": new_complication,
             "resolution": new_resolution,
             "next_steps": new_next_steps,
+            "suggested_next_steps": new_suggested,
         }.items():
             if str(existing[field]) != str(new_value):
                 changes[field] = {"old": str(existing[field]), "new": str(new_value)}
@@ -145,6 +159,7 @@ def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
             UPDATE issues
             SET title = ?, domain = ?, status = ?, confidence = ?,
                 situation = ?, complication = ?, resolution = ?, next_steps = ?,
+                suggested_next_steps = ?,
                 updated_at = ?
             WHERE id = ?
             """,
@@ -157,6 +172,7 @@ def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
                 new_complication,
                 new_resolution,
                 new_next_steps,
+                new_suggested,
                 now,
                 issue_id,
             ],
@@ -260,7 +276,8 @@ def main() -> None:
             issues = fetch_all(
                 conn,
                 """
-                SELECT id, title, domain, status, confidence, situation, complication, resolution, next_steps
+                SELECT id, title, domain, status, confidence, situation, complication, resolution, next_steps,
+                       suggested_next_steps
                 FROM issues
                 ORDER BY datetime(updated_at) DESC
                 LIMIT ?
@@ -278,6 +295,7 @@ def main() -> None:
                     "complication": issue["complication"],
                     "resolution": issue["resolution"],
                     "next_steps": issue["next_steps"],
+                    "suggested_next_steps": issue["suggested_next_steps"],
                 }
                 for issue in issues
             ]
@@ -290,6 +308,22 @@ def main() -> None:
 
             apply_updates(conn, meeting["id"], meeting["meeting_date"], llm_result)
 
+        conn.execute(
+            """
+            INSERT INTO app_state (key, value)
+            VALUES ('last_meeting_run_end', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            [args.end],
+        )
+        conn.execute(
+            """
+            INSERT INTO app_state (key, value)
+            VALUES ('last_meeting_run_start', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            [args.start],
+        )
         conn.commit()
 
 

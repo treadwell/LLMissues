@@ -11,11 +11,13 @@ CREATE TABLE IF NOT EXISTS issues (
     title TEXT NOT NULL,
     domain TEXT NOT NULL DEFAULT "General",
     status TEXT NOT NULL DEFAULT "Open",
+    owner TEXT NOT NULL DEFAULT "",
     confidence REAL NOT NULL DEFAULT 0.5,
     situation TEXT NOT NULL DEFAULT "",
     complication TEXT NOT NULL DEFAULT "",
     resolution TEXT NOT NULL DEFAULT "",
     next_steps TEXT NOT NULL DEFAULT "",
+    suggested_next_steps TEXT NOT NULL DEFAULT "",
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -74,6 +76,11 @@ CREATE TABLE IF NOT EXISTS meeting_document_links (
     FOREIGN KEY(meeting_id) REFERENCES meetings(id),
     FOREIGN KEY(document_id) REFERENCES documents(id)
 );
+
+CREATE TABLE IF NOT EXISTS app_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ""
+);
 """
 
 
@@ -87,6 +94,14 @@ def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with get_connection() as conn:
         conn.executescript(SCHEMA)
+        _ensure_columns(
+            conn,
+            "issues",
+            {
+                "owner": "TEXT NOT NULL DEFAULT \"\"",
+                "suggested_next_steps": "TEXT NOT NULL DEFAULT \"\"",
+            },
+        )
         _ensure_columns(
             conn,
             "documents",

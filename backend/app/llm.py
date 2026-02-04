@@ -109,7 +109,8 @@ def extract_issues(
             "Situation: {situation}\n"
             "Complication: {complication}\n"
             "Resolution: {resolution}\n"
-            "Next steps: {next_steps}\n".format(**issue)
+            "Next steps: {next_steps}\n"
+            "Suggested next steps: {suggested_next_steps}\n".format(**issue)
         )
 
     user_input = (

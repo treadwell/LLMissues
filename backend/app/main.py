@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -27,41 +27,93 @@ def startup() -> None:
 
 
 @app.get("/")
-async def index(request: Request):
+async def index(
+    request: Request,
+    status: str = Query("", max_length=20),
+    domain: str = Query("", max_length=100),
+    owner: str = Query("", max_length=100),
+):
+    filters = {
+        "status": status.strip(),
+        "domain": domain.strip(),
+        "owner": owner.strip(),
+    }
     with get_connection() as conn:
-        issues = fetch_all(
-            conn,
-            """
-            SELECT id, title, domain, status, confidence, updated_at
+        query = """
+            SELECT id, title, domain, status, owner, confidence, updated_at
             FROM issues
-            ORDER BY datetime(updated_at) DESC
-            """,
+            WHERE 1=1
+        """
+        params: list[str] = []
+        if filters["status"]:
+            query += " AND status = ?"
+            params.append(filters["status"])
+        if filters["domain"]:
+            query += " AND domain LIKE ?"
+            params.append(f"%{filters['domain']}%")
+        if filters["owner"]:
+            query += " AND owner LIKE ?"
+            params.append(f"%{filters['owner']}%")
+        query += " ORDER BY datetime(updated_at) DESC"
+
+        issues = fetch_all(conn, query, params)
+        last_run = fetch_one(
+            conn,
+            "SELECT value FROM app_state WHERE key = 'last_meeting_run_end'",
         )
+        if not last_run or not last_run["value"]:
+            last_run = fetch_one(
+                conn,
+                "SELECT MAX(meeting_date) AS value FROM meetings",
+            )
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "issues": issues,
+            "filters": filters,
+            "last_meeting_run_end": last_run["value"] if last_run else None,
         },
     )
 
 
 @app.get("/issues", response_class=HTMLResponse)
-async def issues_list(request: Request):
+async def issues_list(
+    request: Request,
+    status: str = Query("", max_length=20),
+    domain: str = Query("", max_length=100),
+    owner: str = Query("", max_length=100),
+):
+    filters = {
+        "status": status.strip(),
+        "domain": domain.strip(),
+        "owner": owner.strip(),
+    }
     with get_connection() as conn:
-        issues = fetch_all(
-            conn,
-            """
-            SELECT id, title, domain, status, confidence, updated_at
+        query = """
+            SELECT id, title, domain, status, owner, confidence, updated_at
             FROM issues
-            ORDER BY datetime(updated_at) DESC
-            """,
-        )
+            WHERE 1=1
+        """
+        params: list[str] = []
+        if filters["status"]:
+            query += " AND status = ?"
+            params.append(filters["status"])
+        if filters["domain"]:
+            query += " AND domain LIKE ?"
+            params.append(f"%{filters['domain']}%")
+        if filters["owner"]:
+            query += " AND owner LIKE ?"
+            params.append(f"%{filters['owner']}%")
+        query += " ORDER BY datetime(updated_at) DESC"
+
+        issues = fetch_all(conn, query, params)
     return templates.TemplateResponse(
         "partials/issues_list.html",
         {
             "request": request,
             "issues": issues,
+            "filters": filters,
         },
     )
 
@@ -131,22 +183,25 @@ async def create_issue(
     request: Request,
     title: str = Form(...),
     domain: str = Form("General"),
+    owner: str = Form(""),
 ):
     now = datetime.utcnow().isoformat(timespec="seconds")
     with get_connection() as conn:
         cur = conn.execute(
             """
             INSERT INTO issues (
-                title, domain, status, confidence, situation, complication, resolution,
-                next_steps, created_at, updated_at
+                title, domain, status, owner, confidence, situation, complication, resolution,
+                next_steps, suggested_next_steps, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 title.strip(),
                 domain.strip() or "General",
                 "Open",
+                owner.strip(),
                 0.5,
+                "",
                 "",
                 "",
                 "",
@@ -160,7 +215,7 @@ async def create_issue(
         issue = fetch_one(
             conn,
             """
-            SELECT id, title, domain, status, confidence, updated_at
+            SELECT id, title, domain, status, owner, confidence, updated_at
             FROM issues
             WHERE id = ?
             """,
@@ -196,12 +251,14 @@ async def update_issue(
     issue_id: int,
     title: str = Form(...),
     domain: str = Form(...),
+    owner: str = Form(""),
     status: str = Form(...),
     confidence: float = Form(...),
     situation: str = Form(""),
     complication: str = Form(""),
     resolution: str = Form(""),
     next_steps: str = Form(""),
+    suggested_next_steps: str = Form(""),
 ):
     with get_connection() as conn:
         existing = fetch_one(
@@ -217,12 +274,14 @@ async def update_issue(
         updates = {
             "title": title.strip(),
             "domain": domain.strip() or "General",
+            "owner": owner.strip(),
             "status": status.strip(),
             "confidence": float(confidence),
             "situation": situation.strip(),
             "complication": complication.strip(),
             "resolution": resolution.strip(),
             "next_steps": next_steps.strip(),
+            "suggested_next_steps": suggested_next_steps.strip(),
         }
 
         changes: dict[str, Any] = {}
@@ -235,20 +294,23 @@ async def update_issue(
         conn.execute(
             """
             UPDATE issues
-            SET title = ?, domain = ?, status = ?, confidence = ?,
+            SET title = ?, domain = ?, owner = ?, status = ?, confidence = ?,
                 situation = ?, complication = ?, resolution = ?, next_steps = ?,
+                suggested_next_steps = ?,
                 updated_at = ?
             WHERE id = ?
             """,
             [
                 updates["title"],
                 updates["domain"],
+                updates["owner"],
                 updates["status"],
                 updates["confidence"],
                 updates["situation"],
                 updates["complication"],
                 updates["resolution"],
                 updates["next_steps"],
+                updates["suggested_next_steps"],
                 now,
                 issue_id,
             ],
@@ -278,6 +340,90 @@ async def update_issue(
         {
             "request": request,
             "issue": issue,
+            "revisions": revisions,
+            "saved": True,
+        },
+    )
+
+
+@app.post("/issues/{issue_id}/accept-next-steps", response_class=HTMLResponse)
+async def accept_next_steps(request: Request, issue_id: int):
+    with get_connection() as conn:
+        issue = fetch_one(
+            conn,
+            """
+            SELECT * FROM issues WHERE id = ?
+            """,
+            [issue_id],
+        )
+        if not issue:
+            raise HTTPException(status_code=404, detail="Issue not found")
+
+        suggested = (issue["suggested_next_steps"] or "").strip()
+        if not suggested:
+            return templates.TemplateResponse(
+                "partials/issue_detail_form.html",
+                {
+                    "request": request,
+                    "issue": issue,
+                    "saved": False,
+                },
+            )
+
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        updated_next_steps = (issue["next_steps"] or "")
+        if updated_next_steps:
+            updated_next_steps = f"{updated_next_steps}\n\n{suggested}"
+        else:
+            updated_next_steps = suggested
+
+        conn.execute(
+            """
+            UPDATE issues
+            SET next_steps = ?, suggested_next_steps = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            [updated_next_steps, "", now, issue_id],
+        )
+        conn.execute(
+            """
+            INSERT INTO issue_revisions (issue_id, field, old_value, new_value, actor, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [issue_id, "next_steps", issue["next_steps"], updated_next_steps, "user", now],
+        )
+        conn.execute(
+            """
+            INSERT INTO issue_revisions (issue_id, field, old_value, new_value, actor, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [issue_id, "suggested_next_steps", issue["suggested_next_steps"], "", "user", now],
+        )
+        conn.commit()
+
+        updated_issue = fetch_one(
+            conn,
+            """
+            SELECT * FROM issues WHERE id = ?
+            """,
+            [issue_id],
+        )
+        revisions = fetch_all(
+            conn,
+            """
+            SELECT field, old_value, new_value, actor, created_at
+            FROM issue_revisions
+            WHERE issue_id = ?
+            ORDER BY datetime(created_at) DESC
+            """,
+            [issue_id],
+        )
+
+    return templates.TemplateResponse(
+        "partials/issue_detail_form.html",
+        {
+            "request": request,
+            "issue": updated_issue,
             "revisions": revisions,
             "saved": True,
         },

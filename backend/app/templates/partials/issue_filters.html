@@ -1,0 +1,23 @@
+<form class="form inline" hx-get="/issues" hx-target="#issue-list" hx-swap="innerHTML">
+  <div class="form-row">
+    <label>
+      Status
+      <select name="status">
+        <option value="">All</option>
+        {% for option in ["Open", "Watching", "Mitigated", "Closed"] %}
+          <option value="{{ option }}" {% if filters.status == option %}selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Domain
+      <input type="text" name="domain" value="{{ filters.domain }}" placeholder="Domain" />
+    </label>
+    <label>
+      Owner
+      <input type="text" name="owner" value="{{ filters.owner }}" placeholder="Owner" />
+    </label>
+    <button class="secondary" type="submit">Filter</button>
+    <a class="link" href="/">Reset</a>
+  </div>
+</form>

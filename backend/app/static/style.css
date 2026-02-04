@@ -93,6 +93,13 @@ h2 {
   font-size: 1.4rem;
 }
 
+.subtle {
+  font-weight: 400;
+  font-size: 0.95rem;
+  color: var(--muted);
+  margin-left: 0.5rem;
+}
+
 .primary,
 .secondary,
 .link {
