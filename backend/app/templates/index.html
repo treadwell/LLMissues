@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <h2>Issue Register</h2>
+    <button class="primary">New Issue</button>
+  </div>
+  {% if issues %}
+    <ul class="issue-list">
+      {% for issue in issues %}
+        <li class="issue-item">
+          <div class="issue-title">{{ issue.title }}</div>
+          <div class="issue-meta">{{ issue.status }} · {{ issue.domain }}</div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="empty-state">
+      <p>No issues yet.</p>
+      <p>Ingest documents or add a new issue to get started.</p>
+    </div>
+  {% endif %}
+</section>
