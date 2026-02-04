@@ -259,6 +259,15 @@ textarea {
 .issue-title {
   font-weight: 600;
   margin-bottom: 0.25rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.issue-id {
+  font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", monospace;
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 
 .issue-meta {
