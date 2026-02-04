@@ -8,4 +8,8 @@
     {% if issue.owner %}<span>{{ issue.owner }}</span>{% endif %}
     <span>{{ "%.2f"|format(issue.confidence) }}</span>
   </div>
+  <form class="form inline" action="/issues/{{ issue.id }}/delete" method="post" onsubmit="return confirm('Delete this issue?');">
+    <input type="hidden" name="return_to" value="/" />
+    <button class="link" type="submit">Delete</button>
+  </form>
 </li>

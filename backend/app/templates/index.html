@@ -56,6 +56,21 @@
     <button class="primary" type="submit">Add Issue</button>
   </form>
 
+  <form class="form inline" action="/issues/merge" method="post">
+    <div class="form-row">
+      <label>
+        Merge Into (Issue ID)
+        <input type="number" name="target_id" min="1" required />
+      </label>
+      <label>
+        Source IDs (comma-separated)
+        <input type="text" name="source_ids" placeholder="e.g. 4,5,6" required />
+      </label>
+      <input type="hidden" name="return_to" value="/" />
+      <button class="secondary" type="submit">Merge Issues</button>
+    </div>
+  </form>
+
   <div id="issue-list" hx-get="/issues" hx-trigger="load, issue-created from:body">
     {% include "partials/issues_list.html" %}
   </div>
