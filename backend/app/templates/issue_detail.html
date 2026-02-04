@@ -35,20 +35,20 @@
 
 <section class="panel">
   <div class="panel-header">
-    <h2>Linked Documents</h2>
-  </div>
-  <div id="issue-documents">
-    {% include "partials/issue_documents.html" %}
-  </div>
-</section>
-
-<section class="panel">
-  <div class="panel-header">
     <h2>Next Steps</h2>
   </div>
   <div id="issue-steps">
     {% set issue_id = issue.id %}
     {% include "partials/issue_steps.html" %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>Linked Documents</h2>
+  </div>
+  <div id="issue-documents">
+    {% include "partials/issue_documents.html" %}
   </div>
 </section>
 
