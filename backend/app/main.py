@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -792,12 +792,20 @@ async def delete_owner_option(
 @app.post("/analysis/meetings")
 async def analyze_meetings(
     request: Request,
-    start: str = Form(...),
-    end: str = Form(...),
+    start: str = Form(""),
+    end: str = Form(""),
     top_k: int = Form(50),
     return_to: str = Form("/"),
 ):
     with get_connection() as conn:
+        if not end:
+            end = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
+        if not start:
+            last_run = fetch_one(
+                conn,
+                "SELECT value FROM app_state WHERE key = 'last_meeting_run_end'",
+            )
+            start = last_run["value"] if last_run and last_run["value"] else end
         meetings = fetch_all(
             conn,
             """
