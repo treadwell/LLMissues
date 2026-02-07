@@ -16,6 +16,7 @@
         {% for option in domain_options %}
           <option value="{{ option.name }}" {% if filters.domain == option.name %}selected{% endif %}>{{ option.name }}</option>
         {% endfor %}
+        <option value="__UNASSIGNED__" {% if filters.domain == "__UNASSIGNED__" %}selected{% endif %}>Unassigned</option>
       </select>
     </label>
     <label>
@@ -25,6 +26,7 @@
         {% for option in owner_options %}
           <option value="{{ option.name }}" {% if filters.owner == option.name %}selected{% endif %}>{{ option.name }}</option>
         {% endfor %}
+        <option value="__UNASSIGNED__" {% if filters.owner == "__UNASSIGNED__" %}selected{% endif %}>Unassigned</option>
       </select>
     </label>
     <button class="secondary" type="submit">Filter</button>

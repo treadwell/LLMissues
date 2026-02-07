@@ -53,11 +53,17 @@ async def index(
             query += " AND status = ?"
             params.append(filters["status"])
         if filters["domain"]:
-            query += " AND domain LIKE ?"
-            params.append(f"%{filters['domain']}%")
+            if filters["domain"] == "__UNASSIGNED__":
+                query += " AND (domain IS NULL OR domain = '')"
+            else:
+                query += " AND domain LIKE ?"
+                params.append(f"%{filters['domain']}%")
         if filters["owner"]:
-            query += " AND owner LIKE ?"
-            params.append(f"%{filters['owner']}%")
+            if filters["owner"] == "__UNASSIGNED__":
+                query += " AND (owner IS NULL OR owner = '')"
+            else:
+                query += " AND owner LIKE ?"
+                params.append(f"%{filters['owner']}%")
         query += " ORDER BY datetime(updated_at) DESC"
 
         issues = fetch_all(conn, query, params)
@@ -70,6 +76,8 @@ async def index(
                 conn,
                 "SELECT MAX(meeting_date) AS value FROM meetings",
             )
+        default_end = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
+        default_start = last_run["value"] if last_run and last_run["value"] else default_end
     return templates.TemplateResponse(
         "index.html",
         {
@@ -79,6 +87,8 @@ async def index(
             "last_meeting_run_end": last_run["value"] if last_run else None,
             "domain_options": domain_options,
             "owner_options": owner_options,
+            "default_analysis_start": default_start,
+            "default_analysis_end": default_end,
         },
     )
 
@@ -108,11 +118,17 @@ async def issues_list(
             query += " AND status = ?"
             params.append(filters["status"])
         if filters["domain"]:
-            query += " AND domain LIKE ?"
-            params.append(f"%{filters['domain']}%")
+            if filters["domain"] == "__UNASSIGNED__":
+                query += " AND (domain IS NULL OR domain = '')"
+            else:
+                query += " AND domain LIKE ?"
+                params.append(f"%{filters['domain']}%")
         if filters["owner"]:
-            query += " AND owner LIKE ?"
-            params.append(f"%{filters['owner']}%")
+            if filters["owner"] == "__UNASSIGNED__":
+                query += " AND (owner IS NULL OR owner = '')"
+            else:
+                query += " AND owner LIKE ?"
+                params.append(f"%{filters['owner']}%")
         query += " ORDER BY datetime(updated_at) DESC"
 
         issues = fetch_all(conn, query, params)
