@@ -186,14 +186,14 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def build_issue_text(issue: dict, steps: list[dict]) -> str:
+def build_issue_text(issue, steps: list[dict]) -> str:
     parts = [
-        f"Title: {issue.get('title','')}",
-        f"Domain: {issue.get('domain','')}",
-        f"Status: {issue.get('status','')}",
-        f"Situation: {issue.get('situation','')}",
-        f"Complication: {issue.get('complication','')}",
-        f"Resolution: {issue.get('resolution','')}",
+        f"Title: {issue['title'] if 'title' in issue else ''}",
+        f"Domain: {issue['domain'] if 'domain' in issue else ''}",
+        f"Status: {issue['status'] if 'status' in issue else ''}",
+        f"Situation: {issue['situation'] if 'situation' in issue else ''}",
+        f"Complication: {issue['complication'] if 'complication' in issue else ''}",
+        f"Resolution: {issue['resolution'] if 'resolution' in issue else ''}",
     ]
     if steps:
         steps_text = "; ".join(
