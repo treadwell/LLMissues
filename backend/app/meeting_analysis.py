@@ -197,7 +197,7 @@ def build_issue_text(issue, steps: list[dict]) -> str:
     ]
     if steps:
         steps_text = "; ".join(
-            f"{s.get('description','')}|{s.get('owner','')}|{s.get('due_date','')}|{s.get('status','')}"
+            f"{s['description'] if 'description' in s else ''}|{s['owner'] if 'owner' in s else ''}|{s['due_date'] if 'due_date' in s else ''}|{s['status'] if 'status' in s else ''}"
             for s in steps
         )
         parts.append(f"Steps: {steps_text}")

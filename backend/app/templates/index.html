@@ -13,15 +13,15 @@
 
   {% include "partials/issue_filters.html" %}
 
-  <form class="form inline" action="/analysis/meetings" method="post">
+  <form class="form inline" action="/analysis/meetings" method="post" onsubmit="document.getElementById('analysis-spinner').classList.remove('hidden');">
     <div class="form-row">
       <label>
         Analyze meetings (start)
-        <input type="date" name="start" />
+        <input type="date" name="start" value="{{ default_analysis_start }}" />
       </label>
       <label>
         End
-        <input type="date" name="end" />
+        <input type="date" name="end" value="{{ default_analysis_end }}" />
       </label>
       <label>
         Top-K Candidates
@@ -29,6 +29,7 @@
       </label>
       <input type="hidden" name="return_to" value="/" />
       <button class="secondary" type="submit">Run Analysis</button>
+      <span id="analysis-spinner" class="spinner hidden" aria-live="polite">Running…</span>
     </div>
   </form>
 
