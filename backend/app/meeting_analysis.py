@@ -1,6 +1,8 @@
 from datetime import datetime
+import math
 
-from app.db import fetch_one
+from app.db import fetch_all, fetch_one
+from app.embeddings import embed_texts, serialize_vector, deserialize_vector, now_iso
 
 
 def _next_position(conn, issue_id: int) -> int:
@@ -171,3 +173,75 @@ def apply_updates(conn, meeting_id: int, meeting_date: str, llm_result):
             )
 
         insert_suggested_steps(conn, issue_id, update["suggested_steps"])
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    if not a or not b:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def build_issue_text(issue: dict, steps: list[dict]) -> str:
+    parts = [
+        f"Title: {issue.get('title','')}",
+        f"Domain: {issue.get('domain','')}",
+        f"Status: {issue.get('status','')}",
+        f"Situation: {issue.get('situation','')}",
+        f"Complication: {issue.get('complication','')}",
+        f"Resolution: {issue.get('resolution','')}",
+    ]
+    if steps:
+        steps_text = "; ".join(
+            f"{s.get('description','')}|{s.get('owner','')}|{s.get('due_date','')}|{s.get('status','')}"
+            for s in steps
+        )
+        parts.append(f\"Steps: {steps_text}\")
+    return \"\\n\".join(parts).strip()
+
+
+def select_issue_candidates(conn, issues: list[dict], steps_map: dict[int, list[dict]], meeting_text: str, limit: int = 50):
+    if not issues:
+        return []
+
+    # Load existing embeddings
+    issue_ids = [issue["id"] for issue in issues]
+    rows = fetch_all(
+        conn,
+        f\"SELECT issue_id, model, vector FROM issue_embeddings WHERE issue_id IN ({','.join('?' for _ in issue_ids)})\",
+        issue_ids,
+    )
+    emb_map = {row["issue_id"]: row for row in rows}
+
+    # Compute missing embeddings
+    missing = [issue for issue in issues if issue["id"] not in emb_map]
+    if missing:
+        texts = [build_issue_text(issue, steps_map.get(issue["id"], [])) for issue in missing]
+        vectors = embed_texts(texts)
+        for issue, vec in zip(missing, vectors):
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO issue_embeddings (issue_id, model, vector, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                [issue["id"], "", serialize_vector(vec), now_iso()],
+            )
+            emb_map[issue["id"]] = {"vector": serialize_vector(vec)}
+
+    meeting_vec = embed_texts([meeting_text])[0]
+
+    scored = []
+    for issue in issues:
+        vec_payload = emb_map.get(issue["id"])
+        if not vec_payload:
+            continue
+        vec = deserialize_vector(vec_payload["vector"])
+        scored.append((issue["id"], _cosine_similarity(meeting_vec, vec)))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    top_ids = {issue_id for issue_id, _ in scored[:limit]}
+    return [issue for issue in issues if issue["id"] in top_ids]

@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from app import config
 from app.db import fetch_all, fetch_one, get_connection, init_db
 from app.llm import extract_issues
-from app.meeting_analysis import apply_updates
+from app.meeting_analysis import apply_updates, select_issue_candidates
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -848,9 +848,9 @@ async def analyze_meetings(
                 LIMIT 200
                 """,
             )
-            issue_payloads = []
+            steps_map = {}
             for issue in issues:
-                steps = fetch_all(
+                steps_map[issue["id"]] = fetch_all(
                     conn,
                     """
                     SELECT description, owner, due_date, status, position, suggested
@@ -860,20 +860,25 @@ async def analyze_meetings(
                     """,
                     [issue["id"]],
                 )
-                issue_payloads.append(
-                    {
-                        "id": issue["id"],
-                        "title": issue["title"],
-                        "domain": issue["domain"],
-                        "status": issue["status"],
-                        "confidence": issue["confidence"],
-                        "situation": issue["situation"],
-                        "complication": issue["complication"],
-                        "resolution": issue["resolution"],
-                        "next_steps": issue["next_steps"],
-                        "steps": steps,
-                    }
-                )
+
+            meeting_text = "\n\n".join(doc["text"] for doc in doc_payloads)
+            candidate_issues = select_issue_candidates(conn, issues, steps_map, meeting_text, limit=50)
+
+            issue_payloads = [
+                {
+                    "id": issue["id"],
+                    "title": issue["title"],
+                    "domain": issue["domain"],
+                    "status": issue["status"],
+                    "confidence": issue["confidence"],
+                    "situation": issue["situation"],
+                    "complication": issue["complication"],
+                    "resolution": issue["resolution"],
+                    "next_steps": issue["next_steps"],
+                    "steps": steps_map[issue["id"]],
+                }
+                for issue in candidate_issues
+            ]
 
             llm_result = extract_issues(
                 meeting_date=meeting["meeting_date"],

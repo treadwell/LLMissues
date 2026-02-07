@@ -12,7 +12,7 @@ sys.path.append(str(BASE_DIR / "backend"))
 
 from app.db import fetch_all, fetch_one, get_connection, init_db  # noqa: E402
 from app.llm import extract_issues  # noqa: E402
-from app.meeting_analysis import apply_updates  # noqa: E402
+from app.meeting_analysis import apply_updates, select_issue_candidates  # noqa: E402
 
 try:
     from dotenv import load_dotenv
@@ -139,6 +139,21 @@ def main() -> None:
                 """,
                 [args.max_issues],
             )
+            steps_map = {}
+            for issue in issues:
+                steps_map[issue["id"]] = conn.execute(
+                    """
+                    SELECT description, owner, due_date, status, position, suggested
+                    FROM issue_next_steps
+                    WHERE issue_id = ?
+                    ORDER BY position ASC, datetime(created_at) ASC
+                    """,
+                    [issue["id"]],
+                ).fetchall()
+
+            meeting_text = "\n\n".join(doc["text"] for doc in doc_payloads)
+            candidate_issues = select_issue_candidates(conn, issues, steps_map, meeting_text, limit=args.max_issues)
+
             issue_payloads = [
                 {
                     "id": issue["id"],
@@ -150,17 +165,9 @@ def main() -> None:
                     "complication": issue["complication"],
                     "resolution": issue["resolution"],
                     "next_steps": issue["next_steps"],
-                    "steps": conn.execute(
-                        """
-                        SELECT description, owner, due_date, status, position, suggested
-                        FROM issue_next_steps
-                        WHERE issue_id = ?
-                        ORDER BY position ASC, datetime(created_at) ASC
-                        """,
-                        [issue["id"]],
-                    ).fetchall(),
+                    "steps": steps_map[issue["id"]],
                 }
-                for issue in issues
+                for issue in candidate_issues
             ]
 
             llm_result = extract_issues(
