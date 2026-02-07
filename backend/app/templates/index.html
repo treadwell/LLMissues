@@ -23,6 +23,10 @@
         End
         <input type="date" name="end" required />
       </label>
+      <label>
+        Top-K Candidates
+        <input type="number" name="top_k" min="5" max="200" value="50" />
+      </label>
       <input type="hidden" name="return_to" value="/" />
       <button class="secondary" type="submit">Run Analysis</button>
     </div>

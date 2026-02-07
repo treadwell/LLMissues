@@ -200,8 +200,8 @@ def build_issue_text(issue: dict, steps: list[dict]) -> str:
             f"{s.get('description','')}|{s.get('owner','')}|{s.get('due_date','')}|{s.get('status','')}"
             for s in steps
         )
-        parts.append(f\"Steps: {steps_text}\")
-    return \"\\n\".join(parts).strip()
+        parts.append(f"Steps: {steps_text}")
+    return "\n".join(parts).strip()
 
 
 def select_issue_candidates(conn, issues: list[dict], steps_map: dict[int, list[dict]], meeting_text: str, limit: int = 50):
@@ -212,7 +212,7 @@ def select_issue_candidates(conn, issues: list[dict], steps_map: dict[int, list[
     issue_ids = [issue["id"] for issue in issues]
     rows = fetch_all(
         conn,
-        f\"SELECT issue_id, model, vector FROM issue_embeddings WHERE issue_id IN ({','.join('?' for _ in issue_ids)})\",
+        f"SELECT issue_id, model, vector FROM issue_embeddings WHERE issue_id IN ({','.join('?' for _ in issue_ids)})",
         issue_ids,
     )
     emb_map = {row["issue_id"]: row for row in rows}

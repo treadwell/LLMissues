@@ -794,6 +794,7 @@ async def analyze_meetings(
     request: Request,
     start: str = Form(...),
     end: str = Form(...),
+    top_k: int = Form(50),
     return_to: str = Form("/"),
 ):
     with get_connection() as conn:
@@ -862,7 +863,7 @@ async def analyze_meetings(
                 )
 
             meeting_text = "\n\n".join(doc["text"] for doc in doc_payloads)
-            candidate_issues = select_issue_candidates(conn, issues, steps_map, meeting_text, limit=50)
+            candidate_issues = select_issue_candidates(conn, issues, steps_map, meeting_text, limit=top_k)
 
             issue_payloads = [
                 {
