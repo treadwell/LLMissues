@@ -14,6 +14,14 @@
       </select>
     </label>
     <label>
+      Stakeholders
+      <select name="stakeholders" multiple>
+        {% for option in owner_options %}
+          <option value="{{ option.id }}">{{ option.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
       Due Date
       <input type="date" name="due_date" required />
     </label>
@@ -37,6 +45,7 @@
   <ul class="step-list">
     {% for step in steps %}
       <li class="step-item {% if step.suggested %}step-suggested{% endif %}">
+        {% set step_ids = step.stakeholder_ids.split(',') if step.stakeholder_ids else [] %}
         <form class="step-main step-compact" hx-post="/issues/{{ issue_id }}/steps/{{ step.id }}" hx-target="#issue-steps" hx-swap="innerHTML">
           <div class="step-line">
             <input class="step-text" type="text" name="description" value="{{ step.description }}" required />
@@ -50,6 +59,13 @@
                 {% endif %}
               {% endfor %}
             </select>
+            <select class="step-stakeholders" name="stakeholders" multiple>
+              {% for option in owner_options %}
+                <option value="{{ option.id }}" {% if option.id|string in step_ids %}selected{% endif %}>
+                  {{ option.name }}
+                </option>
+              {% endfor %}
+            </select>
             <input class="step-date" type="date" name="due_date" value="{{ step.due_date }}" required />
             <select class="step-status" name="status">
               {% for option in ["Open", "In Progress", "Blocked", "Done"] %}
@@ -61,6 +77,9 @@
           </div>
         </form>
         <div class="step-actions">
+          {% if step.stakeholders %}
+            <div class="issue-meta">Stakeholders: {{ step.stakeholders }}</div>
+          {% endif %}
           {% if step.suggested %}
             <form hx-post="/issues/{{ issue_id }}/steps/{{ step.id }}/accept" hx-target="#issue-steps" hx-swap="innerHTML">
               <button class="secondary" type="submit">Accept</button>

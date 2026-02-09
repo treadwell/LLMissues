@@ -99,6 +99,22 @@ CREATE TABLE IF NOT EXISTS issue_embeddings (
     FOREIGN KEY(issue_id) REFERENCES issues(id)
 );
 
+CREATE TABLE IF NOT EXISTS issue_stakeholders (
+    issue_id INTEGER NOT NULL,
+    owner_id INTEGER NOT NULL,
+    PRIMARY KEY (issue_id, owner_id),
+    FOREIGN KEY(issue_id) REFERENCES issues(id),
+    FOREIGN KEY(owner_id) REFERENCES owner_options(id)
+);
+
+CREATE TABLE IF NOT EXISTS step_stakeholders (
+    step_id INTEGER NOT NULL,
+    owner_id INTEGER NOT NULL,
+    PRIMARY KEY (step_id, owner_id),
+    FOREIGN KEY(step_id) REFERENCES issue_next_steps(id),
+    FOREIGN KEY(owner_id) REFERENCES owner_options(id)
+);
+
 CREATE TABLE IF NOT EXISTS app_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL DEFAULT ""
@@ -113,6 +129,7 @@ CREATE TABLE IF NOT EXISTS domain_options (
 CREATE TABLE IF NOT EXISTS owner_options (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
+    manager_id INTEGER,
     created_at TEXT NOT NULL
 );
 """
@@ -160,6 +177,13 @@ def init_db() -> None:
                 "model": "TEXT NOT NULL DEFAULT \"\"",
                 "vector": "TEXT NOT NULL DEFAULT \"\"",
                 "updated_at": "TEXT NOT NULL DEFAULT \"\"",
+            },
+        )
+        _ensure_columns(
+            conn,
+            "owner_options",
+            {
+                "manager_id": "INTEGER",
             },
         )
         conn.commit()

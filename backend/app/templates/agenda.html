@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <h2>Agenda</h2>
+  </div>
+  <form class="form inline" action="/agenda" method="get">
+    <div class="form-row">
+      <label>
+        Person
+        <select name="owner_id" required>
+          <option value="" disabled {% if not selected_owner_id %}selected{% endif %}>Select owner</option>
+          {% for owner in owners %}
+            <option value="{{ owner.id }}" {% if selected_owner_id == owner.id %}selected{% endif %}>{{ owner.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Include Reports
+        <select name="include_reports">
+          <option value="false" {% if not include_reports %}selected{% endif %}>No</option>
+          <option value="true" {% if include_reports %}selected{% endif %}>Yes</option>
+        </select>
+      </label>
+      <button class="secondary" type="submit">Build Agenda</button>
+    </div>
+  </form>
+</section>
+
+{% if selected_owner_id %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>Issues</h2>
+    </div>
+    {% if issues %}
+      <ul class="issue-list">
+        {% for issue in issues %}
+          <li class="issue-item">
+            <div class="issue-title">
+              <span class="issue-id">#{{ issue.id }}</span>
+              <a href="/issues/{{ issue.id }}">{{ issue.title }}</a>
+            </div>
+            <div class="issue-meta">
+              <span class="status-badge status-{{ issue.status|lower }}">{{ issue.status }}</span>
+              <span>{{ issue.domain }}</span>
+              {% if issue.owner %}<span>{{ issue.owner }}</span>{% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="empty-state">No issues for this owner.</div>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">
+      <h2>Follow-up Steps (by due date)</h2>
+    </div>
+    {% if steps %}
+      <ul class="step-list">
+        {% for step in steps %}
+          <li class="step-item">
+            <div class="step-main">
+              <div class="step-title">{{ step.description }}</div>
+              <div class="issue-meta">
+                <span>{{ step.status }}</span>
+                {% if step.owner %}<span>{{ step.owner }}</span>{% endif %}
+                {% if step.due_date %}<span>{{ step.due_date }}</span>{% endif %}
+                <span>Issue #{{ step.issue_id }}: {{ step.issue_title }}</span>
+              </div>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="empty-state">No follow-up steps for this owner.</div>
+    {% endif %}
+  </section>
+{% endif %}
+{% endblock %}

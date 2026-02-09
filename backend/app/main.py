@@ -148,10 +148,16 @@ def _fetch_steps(conn, issue_id: int):
     return fetch_all(
         conn,
         """
-        SELECT id, issue_id, description, owner, due_date, status, position, suggested, created_at
-        FROM issue_next_steps
+        SELECT s.id, s.issue_id, s.description, s.owner, s.due_date, s.status, s.position, s.suggested,
+               s.created_at,
+               GROUP_CONCAT(o.name, ', ') AS stakeholders,
+               GROUP_CONCAT(o.id, ',') AS stakeholder_ids
+        FROM issue_next_steps s
+        LEFT JOIN step_stakeholders ss ON ss.step_id = s.id
+        LEFT JOIN owner_options o ON o.id = ss.owner_id
         WHERE issue_id = ?
-        ORDER BY position ASC, datetime(created_at) ASC
+        GROUP BY s.id
+        ORDER BY s.position ASC, datetime(s.created_at) ASC
         """,
         [issue_id],
     )
@@ -167,8 +173,34 @@ def _fetch_domain_options(conn):
 def _fetch_owner_options(conn):
     return fetch_all(
         conn,
-        "SELECT id, name FROM owner_options ORDER BY name COLLATE NOCASE",
+        "SELECT id, name, manager_id FROM owner_options ORDER BY name COLLATE NOCASE",
     )
+
+
+def _fetch_issue_stakeholders(conn, issue_id: int) -> list[int]:
+    rows = fetch_all(
+        conn,
+        "SELECT owner_id FROM issue_stakeholders WHERE issue_id = ?",
+        [issue_id],
+    )
+    return [row["owner_id"] for row in rows]
+
+
+def _fetch_owner_descendants(conn, owner_id: int) -> list[int]:
+    rows = fetch_all(
+        conn,
+        """
+        WITH RECURSIVE tree(id) AS (
+            SELECT id FROM owner_options WHERE id = ?
+            UNION ALL
+            SELECT o.id FROM owner_options o
+            JOIN tree t ON o.manager_id = t.id
+        )
+        SELECT id FROM tree
+        """,
+        [owner_id],
+    )
+    return [row["id"] for row in rows]
 
 
 @app.get("/issues/{issue_id}")
@@ -219,6 +251,7 @@ async def issue_detail(request: Request, issue_id: int):
         )
         domain_options = _fetch_domain_options(conn)
         owner_options = _fetch_owner_options(conn)
+        issue_stakeholders = _fetch_issue_stakeholders(conn, issue_id)
         steps = _fetch_steps(conn, issue_id)
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
@@ -233,6 +266,7 @@ async def issue_detail(request: Request, issue_id: int):
             "steps": steps,
             "domain_options": domain_options,
             "owner_options": owner_options,
+            "issue_stakeholders": issue_stakeholders,
         },
     )
 
@@ -422,6 +456,7 @@ async def update_issue(
     title: str = Form(...),
     domain: str = Form(...),
     owner: str = Form(""),
+    stakeholders: list[int] = Form([]),
     status: str = Form(...),
     confidence: float = Form(...),
     situation: str = Form(""),
@@ -488,6 +523,12 @@ async def update_issue(
                 issue_id,
             ],
         )
+        conn.execute("DELETE FROM issue_stakeholders WHERE issue_id = ?", [issue_id])
+        for owner_id in stakeholders:
+            conn.execute(
+                "INSERT OR IGNORE INTO issue_stakeholders (issue_id, owner_id) VALUES (?, ?)",
+                [issue_id, owner_id],
+            )
         _log_revisions(conn, issue_id, changes, actor="user")
         conn.commit()
         issue = fetch_one(
@@ -537,6 +578,7 @@ async def add_step(
     issue_id: int,
     description: str = Form(...),
     owner: str = Form(""),
+    stakeholders: list[int] = Form([]),
     due_date: str = Form(""),
     status: str = Form("Open"),
     position: int = Form(0),
@@ -561,13 +603,19 @@ async def add_step(
                 """,
                 [issue_id, desired],
             )
-        conn.execute(
+        cur = conn.execute(
             """
             INSERT INTO issue_next_steps (issue_id, description, owner, due_date, status, position, suggested, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [issue_id, description.strip(), owner.strip(), due_date.strip(), status.strip(), desired, 0, now, now],
         )
+        step_id = cur.lastrowid
+        for owner_id in stakeholders:
+            conn.execute(
+                "INSERT OR IGNORE INTO step_stakeholders (step_id, owner_id) VALUES (?, ?)",
+                [step_id, owner_id],
+            )
         conn.commit()
         steps = _fetch_steps(conn, issue_id)
 
@@ -615,6 +663,7 @@ async def update_step(
     step_id: int,
     description: str = Form(...),
     owner: str = Form(""),
+    stakeholders: list[int] = Form([]),
     due_date: str = Form(""),
     status: str = Form("Open"),
     position: int = Form(1),
@@ -673,6 +722,12 @@ async def update_step(
                 issue_id,
             ],
         )
+        conn.execute("DELETE FROM step_stakeholders WHERE step_id = ?", [step_id])
+        for owner_id in stakeholders:
+            conn.execute(
+                "INSERT OR IGNORE INTO step_stakeholders (step_id, owner_id) VALUES (?, ?)",
+                [step_id, owner_id],
+            )
         conn.commit()
         steps = _fetch_steps(conn, issue_id)
 
@@ -734,6 +789,71 @@ async def add_owner_option(request: Request, name: str = Form(...), return_to: s
     return RedirectResponse(url=return_to, status_code=303)
 
 
+@app.get("/agenda")
+async def agenda(
+    request: Request,
+    owner_id: int | None = Query(None),
+    include_reports: bool = Query(False),
+):
+    with get_connection() as conn:
+        owners = _fetch_owner_options(conn)
+        if not owner_id:
+            return templates.TemplateResponse(
+                "agenda.html",
+                {
+                    "request": request,
+                    "owners": owners,
+                    "selected_owner_id": None,
+                    "include_reports": include_reports,
+                    "issues": [],
+                    "steps": [],
+                },
+            )
+
+        owner_ids = _fetch_owner_descendants(conn, owner_id) if include_reports else [owner_id]
+
+        issues = fetch_all(
+            conn,
+            f"""
+            SELECT DISTINCT i.id, i.title, i.domain, i.status, i.owner
+            FROM issues i
+            LEFT JOIN issue_stakeholders s ON s.issue_id = i.id
+            WHERE i.owner IN ({','.join('?' for _ in owner_ids)})
+               OR s.owner_id IN ({','.join('?' for _ in owner_ids)})
+            ORDER BY i.title COLLATE NOCASE
+            """,
+            owner_ids + owner_ids,
+        )
+
+        steps = fetch_all(
+            conn,
+            f"""
+            SELECT s.id, s.description, s.owner, s.due_date, s.status, s.position,
+                   i.id AS issue_id, i.title AS issue_title
+            FROM issue_next_steps s
+            JOIN issues i ON i.id = s.issue_id
+            LEFT JOIN step_stakeholders ss ON ss.step_id = s.id
+            WHERE s.owner IN ({','.join('?' for _ in owner_ids)})
+               OR ss.owner_id IN ({','.join('?' for _ in owner_ids)})
+            GROUP BY s.id
+            ORDER BY (s.due_date = ''), s.due_date, s.position
+            """,
+            owner_ids + owner_ids,
+        )
+
+    return templates.TemplateResponse(
+        "agenda.html",
+        {
+            "request": request,
+            "owners": owners,
+            "selected_owner_id": owner_id,
+            "include_reports": include_reports,
+            "issues": issues,
+            "steps": steps,
+        },
+    )
+
+
 @app.get("/options")
 async def options_index(request: Request):
     with get_connection() as conn:
@@ -770,12 +890,13 @@ async def update_owner_option(
     request: Request,
     owner_id: int,
     name: str = Form(...),
+    manager_id: int | None = Form(None),
     return_to: str = Form("/options"),
 ):
     with get_connection() as conn:
         conn.execute(
-            "UPDATE owner_options SET name = ? WHERE id = ?",
-            [name.strip(), owner_id],
+            "UPDATE owner_options SET name = ?, manager_id = ? WHERE id = ?",
+            [name.strip(), manager_id, owner_id],
         )
         conn.commit()
     return RedirectResponse(url=return_to, status_code=303)

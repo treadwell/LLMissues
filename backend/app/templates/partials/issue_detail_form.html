@@ -27,6 +27,16 @@
         {% endfor %}
       </select>
     </label>
+    <label>
+      Stakeholders
+      <select name="stakeholders" multiple>
+        {% for option in owner_options %}
+          <option value="{{ option.id }}" {% if option.id in issue_stakeholders %}selected{% endif %}>
+            {{ option.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
   </div>
 
   <div class="form-row">

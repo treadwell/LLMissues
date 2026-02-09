@@ -64,6 +64,16 @@
           <div class="option-row">
             <form class="option-inline" action="/options/owner/{{ owner.id }}" method="post">
               <input type="text" name="name" value="{{ owner.name }}" required />
+              <select name="manager_id">
+                <option value="">No manager</option>
+                {% for mgr in owners %}
+                  {% if mgr.id != owner.id %}
+                    <option value="{{ mgr.id }}" {% if owner.manager_id == mgr.id %}selected{% endif %}>
+                      {{ mgr.name }}
+                    </option>
+                  {% endif %}
+                {% endfor %}
+              </select>
               <input type="hidden" name="return_to" value="/options" />
               <button class="secondary" type="submit">Update</button>
             </form>
