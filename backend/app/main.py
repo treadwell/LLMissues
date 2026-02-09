@@ -556,6 +556,9 @@ async def update_issue(
             "issue": issue,
             "revisions": revisions,
             "saved": True,
+            "domain_options": _fetch_domain_options(conn),
+            "owner_options": _fetch_owner_options(conn),
+            "issue_stakeholders": _fetch_issue_stakeholders(conn, issue_id),
         },
     )
 
