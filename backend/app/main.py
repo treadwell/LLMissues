@@ -817,8 +817,9 @@ async def agenda(
             f"""
             SELECT DISTINCT i.id, i.title, i.domain, i.status, i.owner
             FROM issues i
+            LEFT JOIN owner_options o ON o.name = i.owner
             LEFT JOIN issue_stakeholders s ON s.issue_id = i.id
-            WHERE i.owner IN ({','.join('?' for _ in owner_ids)})
+            WHERE o.id IN ({','.join('?' for _ in owner_ids)})
                OR s.owner_id IN ({','.join('?' for _ in owner_ids)})
             ORDER BY i.title COLLATE NOCASE
             """,
@@ -832,8 +833,9 @@ async def agenda(
                    i.id AS issue_id, i.title AS issue_title
             FROM issue_next_steps s
             JOIN issues i ON i.id = s.issue_id
+            LEFT JOIN owner_options o ON o.name = s.owner
             LEFT JOIN step_stakeholders ss ON ss.step_id = s.id
-            WHERE s.owner IN ({','.join('?' for _ in owner_ids)})
+            WHERE o.id IN ({','.join('?' for _ in owner_ids)})
                OR ss.owner_id IN ({','.join('?' for _ in owner_ids)})
             GROUP BY s.id
             ORDER BY (s.due_date = ''), s.due_date, s.position
