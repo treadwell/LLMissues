@@ -8,9 +8,13 @@ from openai import OpenAI
 DEFAULT_EMBED_MODEL = "text-embedding-3-small"
 
 
+def resolve_embedding_model(model: str | None = None) -> str:
+    return (model or os.environ.get("OPENAI_EMBEDDING_MODEL") or DEFAULT_EMBED_MODEL).strip()
+
+
 def embed_texts(texts: Iterable[str], model: str | None = None) -> list[list[float]]:
     client = OpenAI()
-    use_model = model or os.environ.get("OPENAI_EMBEDDING_MODEL") or DEFAULT_EMBED_MODEL
+    use_model = resolve_embedding_model(model)
     inputs = [t if t is not None else "" for t in texts]
     response = client.embeddings.create(model=use_model, input=inputs)
     return [item.embedding for item in response.data]

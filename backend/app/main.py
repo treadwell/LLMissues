@@ -1,4 +1,6 @@
 import json
+import os
+import sqlite3
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -9,6 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.calibre_ingest import ingest_library
 from app import config
 from app.db import fetch_all, fetch_one, get_connection, init_db
 from app.llm import extract_issues
@@ -27,12 +30,14 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 ANALYSIS_STATUS_KEY = "analysis_status"
 _ANALYSIS_THREAD_LOCK = threading.Lock()
 _ANALYSIS_THREAD: threading.Thread | None = None
+_LAST_ANALYSIS_STATUS: dict[str, Any] | None = None
 
 
 def _analysis_status_defaults() -> dict[str, Any]:
     return {
         "state": "idle",
         "message": "",
+        "last_error": "",
         "start": "",
         "end": "",
         "top_k": 50,
@@ -46,20 +51,28 @@ def _analysis_status_defaults() -> dict[str, Any]:
 
 
 def _fetch_analysis_status(conn) -> dict[str, Any]:
-    row = fetch_one(conn, "SELECT value FROM app_state WHERE key = ?", [ANALYSIS_STATUS_KEY])
+    global _LAST_ANALYSIS_STATUS
+    try:
+        row = fetch_one(conn, "SELECT value FROM app_state WHERE key = ?", [ANALYSIS_STATUS_KEY])
+    except sqlite3.OperationalError:
+        return (_LAST_ANALYSIS_STATUS or _analysis_status_defaults()).copy()
     status = _analysis_status_defaults()
     if not row or not row["value"]:
+        _LAST_ANALYSIS_STATUS = status.copy()
         return status
     try:
         parsed = json.loads(row["value"])
     except (TypeError, ValueError):
+        _LAST_ANALYSIS_STATUS = status.copy()
         return status
     if isinstance(parsed, dict):
         status.update(parsed)
+    _LAST_ANALYSIS_STATUS = status.copy()
     return status
 
 
 def _save_analysis_status(conn, updates: dict[str, Any]) -> dict[str, Any]:
+    global _LAST_ANALYSIS_STATUS
     status = _analysis_status_defaults()
     status.update(_fetch_analysis_status(conn))
     status.update(updates)
@@ -72,6 +85,7 @@ def _save_analysis_status(conn, updates: dict[str, Any]) -> dict[str, Any]:
         """,
         [ANALYSIS_STATUS_KEY, json.dumps(status)],
     )
+    _LAST_ANALYSIS_STATUS = status.copy()
     return status
 
 
@@ -97,6 +111,55 @@ def _start_analysis_thread(start: str, end: str, top_k: int) -> bool:
 def _run_analysis_job(start: str, end: str, top_k: int) -> None:
     with get_connection() as conn:
         try:
+            ingest_note = ""
+            pre_ingest_note = ""
+            configured_path = (os.environ.get("CALIBRE_LIBRARY_PATH") or "").strip()
+            library_path: Path | None = None
+            if configured_path and Path(configured_path).exists():
+                library_path = Path(configured_path)
+            elif Path("/calibre/metadata.db").exists() and Path("/calibre/full-text-search.db").exists():
+                library_path = Path("/calibre")
+                if configured_path:
+                    pre_ingest_note = "Using mounted Calibre library at /calibre. "
+            elif not configured_path:
+                ingest_note = "Calibre refresh skipped: CALIBRE_LIBRARY_PATH is not set and /calibre is not mounted."
+            else:
+                ingest_note = f"Calibre refresh skipped: library path not found ({configured_path})."
+
+            if library_path:
+                _save_analysis_status(
+                    conn,
+                    {
+                        "state": "running",
+                        "message": "Refreshing meetings from Calibre...",
+                        "start": start,
+                        "end": end,
+                        "top_k": top_k,
+                        "meetings_total": 0,
+                        "meetings_processed": 0,
+                        "meetings_analyzed": 0,
+                        "meetings_skipped": 0,
+                        "error_count": 0,
+                        "last_error": "",
+                    },
+                )
+                conn.commit()
+                stats = ingest_library(
+                    library_path,
+                    conn,
+                    start_date=start,
+                    end_date=end,
+                )
+                conn.commit()
+                ingest_note = (
+                    f"{pre_ingest_note}Calibre refresh: "
+                    f"{stats['books_seen']} books scanned, "
+                    f"{stats['meetings_created']} meetings created, "
+                    f"{stats['meeting_links_added']} new meeting-document links."
+                )
+                if stats["meeting_tags_invalid"]:
+                    ingest_note += f" Invalid meeting tags: {stats['meeting_tags_invalid']}."
+
             meetings = fetch_all(
                 conn,
                 """
@@ -119,12 +182,13 @@ def _run_analysis_job(start: str, end: str, top_k: int) -> None:
                 if span and span["count"]:
                     message = (
                         f"No meetings found in {start} to {end}. "
-                        f"Meetings loaded: {span['count']} ({span['min_date']} to {span['max_date']})."
+                        f"Meetings loaded: {span['count']} ({span['min_date']} to {span['max_date']}). "
+                        f"{ingest_note}"
                     )
                 else:
                     message = (
                         f"No meetings found in {start} to {end}. "
-                        "The meetings table is empty; run meeting import first."
+                        f"The meetings table is empty. {ingest_note}"
                     )
                 _save_analysis_status(
                     conn,
@@ -160,9 +224,31 @@ def _run_analysis_job(start: str, end: str, top_k: int) -> None:
                     "meetings_analyzed": 0,
                     "meetings_skipped": 0,
                     "error_count": 0,
+                    "last_error": "",
                 },
             )
             conn.commit()
+
+            if ingest_note:
+                _save_analysis_status(
+                    conn,
+                    {
+                        "state": "running",
+                        "message": (
+                            f"{ingest_note} Running analysis: 0/{meetings_total} meetings complete."
+                        ),
+                        "start": start,
+                        "end": end,
+                        "top_k": top_k,
+                        "meetings_total": meetings_total,
+                        "meetings_processed": 0,
+                        "meetings_analyzed": 0,
+                        "meetings_skipped": 0,
+                        "error_count": 0,
+                        "last_error": "",
+                    },
+                )
+                conn.commit()
 
             for index, meeting in enumerate(meetings, start=1):
                 try:
@@ -255,11 +341,14 @@ def _run_analysis_job(start: str, end: str, top_k: int) -> None:
                 except Exception as exc:
                     errors.append(f"{meeting['meeting_date']}: {exc}")
                 finally:
+                    progress_message = f"Running analysis: {index}/{meetings_total} meetings complete."
+                    if ingest_note:
+                        progress_message = f"{ingest_note} {progress_message}"
                     _save_analysis_status(
                         conn,
                         {
                             "state": "running",
-                            "message": f"Running analysis: {index}/{meetings_total} meetings complete.",
+                            "message": progress_message,
                             "start": start,
                             "end": end,
                             "top_k": top_k,
@@ -268,6 +357,7 @@ def _run_analysis_job(start: str, end: str, top_k: int) -> None:
                             "meetings_analyzed": meetings_analyzed,
                             "meetings_skipped": meetings_skipped,
                             "error_count": len(errors),
+                            "last_error": errors[0] if errors else "",
                         },
                     )
                     conn.commit()
@@ -290,11 +380,17 @@ def _run_analysis_job(start: str, end: str, top_k: int) -> None:
             )
             conn.commit()
 
-            if meetings_analyzed == 0:
+            if errors and meetings_analyzed == 0:
+                state = "error"
+                message = (
+                    f"Analysis failed for all {meetings_total} meeting(s) in {start} to {end}. "
+                    f"First error: {errors[0]}"
+                )
+            elif meetings_analyzed == 0:
                 state = "warning"
                 message = (
-                    f"Found {meetings_total} meeting(s) in {start} to {end}, but none had analyzable transcript text. "
-                    "Check transcript import/text extraction."
+                    f"Found {meetings_total} meeting(s) in {start} to {end}, but none produced analyzable transcript payloads "
+                    f"({meetings_skipped} skipped before LLM). Check transcript import/text extraction."
                 )
             elif errors:
                 state = "warning"
@@ -308,6 +404,8 @@ def _run_analysis_job(start: str, end: str, top_k: int) -> None:
                 message = (
                     f"Analysis finished: {meetings_analyzed}/{meetings_total} meeting(s) analyzed in {start} to {end}."
                 )
+            if ingest_note:
+                message = f"{ingest_note} {message}"
             _save_analysis_status(
                 conn,
                 {
@@ -321,6 +419,7 @@ def _run_analysis_job(start: str, end: str, top_k: int) -> None:
                     "meetings_analyzed": meetings_analyzed,
                     "meetings_skipped": meetings_skipped,
                     "error_count": len(errors),
+                    "last_error": errors[0] if errors else "",
                 },
             )
             conn.commit()
@@ -330,6 +429,7 @@ def _run_analysis_job(start: str, end: str, top_k: int) -> None:
                 {
                     "state": "error",
                     "message": f"Analysis failed: {exc}",
+                    "last_error": str(exc),
                     "start": start,
                     "end": end,
                     "top_k": top_k,
@@ -1289,6 +1389,7 @@ async def analyze_meetings(
                     "start": start,
                     "end": end,
                     "top_k": top_k,
+                    "last_error": "",
                 },
             )
             conn.commit()
@@ -1315,6 +1416,7 @@ async def analyze_meetings(
                 "meetings_analyzed": 0,
                 "meetings_skipped": 0,
                 "error_count": 0,
+                "last_error": "",
             },
         )
         conn.commit()

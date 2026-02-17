@@ -22,4 +22,8 @@
       Range: {{ analysis_status.start }} to {{ analysis_status.end }} | Top-K {{ analysis_status.top_k }}
     </p>
   {% endif %}
+
+  {% if analysis_status.last_error and analysis_status.state != "running" %}
+    <p class="subtle">Last error: {{ analysis_status.last_error }}</p>
+  {% endif %}
 </div>

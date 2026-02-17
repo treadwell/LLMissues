@@ -2,7 +2,13 @@ from datetime import datetime
 import math
 
 from app.db import fetch_all, fetch_one
-from app.embeddings import embed_texts, serialize_vector, deserialize_vector, now_iso
+from app.embeddings import (
+    embed_texts,
+    serialize_vector,
+    deserialize_vector,
+    now_iso,
+    resolve_embedding_model,
+)
 
 
 def _next_position(conn, issue_id: int) -> int:
@@ -207,6 +213,7 @@ def build_issue_text(issue, steps: list[dict]) -> str:
 def select_issue_candidates(conn, issues: list[dict], steps_map: dict[int, list[dict]], meeting_text: str, limit: int = 50):
     if not issues:
         return []
+    embed_model = resolve_embedding_model()
 
     # Load existing embeddings
     issue_ids = [issue["id"] for issue in issues]
@@ -217,22 +224,26 @@ def select_issue_candidates(conn, issues: list[dict], steps_map: dict[int, list[
     )
     emb_map = {row["issue_id"]: row for row in rows}
 
-    # Compute missing embeddings
-    missing = [issue for issue in issues if issue["id"] not in emb_map]
-    if missing:
-        texts = [build_issue_text(issue, steps_map.get(issue["id"], [])) for issue in missing]
-        vectors = embed_texts(texts)
-        for issue, vec in zip(missing, vectors):
+    # Compute missing or stale embeddings
+    missing_or_stale = [
+        issue
+        for issue in issues
+        if issue["id"] not in emb_map or (emb_map[issue["id"]]["model"] or "") != embed_model
+    ]
+    if missing_or_stale:
+        texts = [build_issue_text(issue, steps_map.get(issue["id"], [])) for issue in missing_or_stale]
+        vectors = embed_texts(texts, model=embed_model)
+        for issue, vec in zip(missing_or_stale, vectors):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO issue_embeddings (issue_id, model, vector, updated_at)
                 VALUES (?, ?, ?, ?)
                 """,
-                [issue["id"], "", serialize_vector(vec), now_iso()],
+                [issue["id"], embed_model, serialize_vector(vec), now_iso()],
             )
-            emb_map[issue["id"]] = {"vector": serialize_vector(vec)}
+            emb_map[issue["id"]] = {"model": embed_model, "vector": serialize_vector(vec)}
 
-    meeting_vec = embed_texts([meeting_text])[0]
+    meeting_vec = embed_texts([meeting_text], model=embed_model)[0]
 
     scored = []
     for issue in issues:

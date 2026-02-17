@@ -8,6 +8,9 @@ services:
       - "${HOST_PORT:-8012}:8000"
     env_file:
       - .env
+    environment:
+      - CALIBRE_LIBRARY_PATH=/calibre
     volumes:
       - ./data:/app/data
+      - "${CALIBRE_LIBRARY_PATH:-/tmp/llmissues-empty-calibre}:/calibre:ro"
     restart: unless-stopped

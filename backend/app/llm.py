@@ -1,10 +1,15 @@
 import json
+import os
 from dataclasses import dataclass
 from typing import Any
 
 from openai import OpenAI
 
-MODEL = "gpt-5.2"
+DEFAULT_MODEL = "gpt-5.2"
+
+
+def resolve_llm_model() -> str:
+    return (os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL).strip()
 
 
 @dataclass
@@ -174,7 +179,7 @@ def extract_issues(
     ]
 
     response = client.chat.completions.create(
-        model=MODEL,
+        model=resolve_llm_model(),
         messages=[
             {"role": "system", "content": instructions},
             {"role": "user", "content": user_input},
