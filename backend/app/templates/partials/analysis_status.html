@@ -1,0 +1,25 @@
+<div
+  id="analysis-status"
+  class="analysis-status analysis-{{ analysis_status.state }}"
+  hx-get="/analysis/status"
+  hx-trigger="load, every 2s"
+  hx-swap="outerHTML"
+>
+  {% if analysis_status.state == "running" %}
+    <div class="spinner">
+      Running {{ analysis_status.meetings_processed }} / {{ analysis_status.meetings_total }} meeting(s)...
+    </div>
+  {% endif %}
+
+  {% if analysis_status.message %}
+    <p>{{ analysis_status.message }}</p>
+  {% else %}
+    <p class="subtle">Ready to run meeting analysis.</p>
+  {% endif %}
+
+  {% if analysis_status.start and analysis_status.end %}
+    <p class="subtle">
+      Range: {{ analysis_status.start }} to {{ analysis_status.end }} | Top-K {{ analysis_status.top_k }}
+    </p>
+  {% endif %}
+</div>

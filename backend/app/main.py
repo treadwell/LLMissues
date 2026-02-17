@@ -1,3 +1,5 @@
+import json
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,319 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+ANALYSIS_STATUS_KEY = "analysis_status"
+_ANALYSIS_THREAD_LOCK = threading.Lock()
+_ANALYSIS_THREAD: threading.Thread | None = None
+
+
+def _analysis_status_defaults() -> dict[str, Any]:
+    return {
+        "state": "idle",
+        "message": "",
+        "start": "",
+        "end": "",
+        "top_k": 50,
+        "meetings_total": 0,
+        "meetings_processed": 0,
+        "meetings_analyzed": 0,
+        "meetings_skipped": 0,
+        "error_count": 0,
+        "updated_at": "",
+    }
+
+
+def _fetch_analysis_status(conn) -> dict[str, Any]:
+    row = fetch_one(conn, "SELECT value FROM app_state WHERE key = ?", [ANALYSIS_STATUS_KEY])
+    status = _analysis_status_defaults()
+    if not row or not row["value"]:
+        return status
+    try:
+        parsed = json.loads(row["value"])
+    except (TypeError, ValueError):
+        return status
+    if isinstance(parsed, dict):
+        status.update(parsed)
+    return status
+
+
+def _save_analysis_status(conn, updates: dict[str, Any]) -> dict[str, Any]:
+    status = _analysis_status_defaults()
+    status.update(_fetch_analysis_status(conn))
+    status.update(updates)
+    status["updated_at"] = datetime.utcnow().replace(microsecond=0).isoformat()
+    conn.execute(
+        """
+        INSERT INTO app_state (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        [ANALYSIS_STATUS_KEY, json.dumps(status)],
+    )
+    return status
+
+
+def _analysis_running() -> bool:
+    with _ANALYSIS_THREAD_LOCK:
+        return _ANALYSIS_THREAD is not None and _ANALYSIS_THREAD.is_alive()
+
+
+def _start_analysis_thread(start: str, end: str, top_k: int) -> bool:
+    global _ANALYSIS_THREAD
+    with _ANALYSIS_THREAD_LOCK:
+        if _ANALYSIS_THREAD is not None and _ANALYSIS_THREAD.is_alive():
+            return False
+        _ANALYSIS_THREAD = threading.Thread(
+            target=_run_analysis_job,
+            args=(start, end, top_k),
+            daemon=True,
+        )
+        _ANALYSIS_THREAD.start()
+    return True
+
+
+def _run_analysis_job(start: str, end: str, top_k: int) -> None:
+    with get_connection() as conn:
+        try:
+            meetings = fetch_all(
+                conn,
+                """
+                SELECT id, meeting_date
+                FROM meetings
+                WHERE meeting_date BETWEEN ? AND ?
+                ORDER BY meeting_date ASC
+                """,
+                [start, end],
+            )
+
+            if not meetings:
+                span = fetch_one(
+                    conn,
+                    """
+                    SELECT COUNT(*) AS count, MIN(meeting_date) AS min_date, MAX(meeting_date) AS max_date
+                    FROM meetings
+                    """,
+                )
+                if span and span["count"]:
+                    message = (
+                        f"No meetings found in {start} to {end}. "
+                        f"Meetings loaded: {span['count']} ({span['min_date']} to {span['max_date']})."
+                    )
+                else:
+                    message = (
+                        f"No meetings found in {start} to {end}. "
+                        "The meetings table is empty; run meeting import first."
+                    )
+                _save_analysis_status(
+                    conn,
+                    {
+                        "state": "warning",
+                        "message": message,
+                        "start": start,
+                        "end": end,
+                        "meetings_total": 0,
+                        "meetings_processed": 0,
+                        "meetings_analyzed": 0,
+                        "meetings_skipped": 0,
+                        "error_count": 0,
+                    },
+                )
+                conn.commit()
+                return
+
+            meetings_total = len(meetings)
+            meetings_analyzed = 0
+            meetings_skipped = 0
+            errors: list[str] = []
+            _save_analysis_status(
+                conn,
+                {
+                    "state": "running",
+                    "message": f"Running analysis: 0/{meetings_total} meetings complete.",
+                    "start": start,
+                    "end": end,
+                    "top_k": top_k,
+                    "meetings_total": meetings_total,
+                    "meetings_processed": 0,
+                    "meetings_analyzed": 0,
+                    "meetings_skipped": 0,
+                    "error_count": 0,
+                },
+            )
+            conn.commit()
+
+            for index, meeting in enumerate(meetings, start=1):
+                try:
+                    documents = fetch_all(
+                        conn,
+                        """
+                        SELECT id, title, path, calibre_book_id, text_excerpt
+                        FROM documents
+                        WHERE id IN (
+                            SELECT document_id FROM meeting_document_links WHERE meeting_id = ?
+                        )
+                        ORDER BY datetime(created_at) DESC
+                        """,
+                        [meeting["id"]],
+                    )
+
+                    doc_payloads = []
+                    for doc in documents:
+                        text = doc["text_excerpt"] or ""
+                        if not text:
+                            continue
+                        doc_payloads.append(
+                            {
+                                "id": doc["id"],
+                                "title": doc["title"],
+                                "path": doc["path"],
+                                "text": text,
+                            }
+                        )
+
+                    if not doc_payloads:
+                        meetings_skipped += 1
+                        continue
+
+                    issues = fetch_all(
+                        conn,
+                        """
+                        SELECT id, title, domain, status, confidence, situation, complication, resolution, next_steps
+                        FROM issues
+                        ORDER BY datetime(updated_at) DESC
+                        LIMIT 200
+                        """,
+                    )
+                    steps_map = {}
+                    for issue in issues:
+                        steps_map[issue["id"]] = fetch_all(
+                            conn,
+                            """
+                            SELECT description, owner, due_date, status, position, suggested
+                            FROM issue_next_steps
+                            WHERE issue_id = ?
+                            ORDER BY position ASC, datetime(created_at) ASC
+                            """,
+                            [issue["id"]],
+                        )
+
+                    meeting_text = "\n\n".join(doc["text"] for doc in doc_payloads)
+                    candidate_issues = select_issue_candidates(
+                        conn,
+                        issues,
+                        steps_map,
+                        meeting_text,
+                        limit=top_k,
+                    )
+
+                    issue_payloads = [
+                        {
+                            "id": issue["id"],
+                            "title": issue["title"],
+                            "domain": issue["domain"],
+                            "status": issue["status"],
+                            "confidence": issue["confidence"],
+                            "situation": issue["situation"],
+                            "complication": issue["complication"],
+                            "resolution": issue["resolution"],
+                            "next_steps": issue["next_steps"],
+                            "steps": steps_map[issue["id"]],
+                        }
+                        for issue in candidate_issues
+                    ]
+
+                    llm_result = extract_issues(
+                        meeting_date=meeting["meeting_date"],
+                        documents=doc_payloads,
+                        existing_issues=issue_payloads,
+                    )
+
+                    apply_updates(conn, meeting["id"], meeting["meeting_date"], llm_result)
+                    meetings_analyzed += 1
+                except Exception as exc:
+                    errors.append(f"{meeting['meeting_date']}: {exc}")
+                finally:
+                    _save_analysis_status(
+                        conn,
+                        {
+                            "state": "running",
+                            "message": f"Running analysis: {index}/{meetings_total} meetings complete.",
+                            "start": start,
+                            "end": end,
+                            "top_k": top_k,
+                            "meetings_total": meetings_total,
+                            "meetings_processed": index,
+                            "meetings_analyzed": meetings_analyzed,
+                            "meetings_skipped": meetings_skipped,
+                            "error_count": len(errors),
+                        },
+                    )
+                    conn.commit()
+
+            conn.execute(
+                """
+                INSERT INTO app_state (key, value)
+                VALUES ('last_meeting_run_end', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                [end],
+            )
+            conn.execute(
+                """
+                INSERT INTO app_state (key, value)
+                VALUES ('last_meeting_run_start', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                [start],
+            )
+            conn.commit()
+
+            if meetings_analyzed == 0:
+                state = "warning"
+                message = (
+                    f"Found {meetings_total} meeting(s) in {start} to {end}, but none had analyzable transcript text. "
+                    "Check transcript import/text extraction."
+                )
+            elif errors:
+                state = "warning"
+                message = (
+                    f"Analysis finished for {meetings_total} meeting(s): "
+                    f"{meetings_analyzed} analyzed, {meetings_skipped} skipped, {len(errors)} error(s). "
+                    f"First error: {errors[0]}"
+                )
+            else:
+                state = "success"
+                message = (
+                    f"Analysis finished: {meetings_analyzed}/{meetings_total} meeting(s) analyzed in {start} to {end}."
+                )
+            _save_analysis_status(
+                conn,
+                {
+                    "state": state,
+                    "message": message,
+                    "start": start,
+                    "end": end,
+                    "top_k": top_k,
+                    "meetings_total": meetings_total,
+                    "meetings_processed": meetings_total,
+                    "meetings_analyzed": meetings_analyzed,
+                    "meetings_skipped": meetings_skipped,
+                    "error_count": len(errors),
+                },
+            )
+            conn.commit()
+        except Exception as exc:
+            _save_analysis_status(
+                conn,
+                {
+                    "state": "error",
+                    "message": f"Analysis failed: {exc}",
+                    "start": start,
+                    "end": end,
+                    "top_k": top_k,
+                },
+            )
+            conn.commit()
+
 
 @app.on_event("startup")
 def startup() -> None:
@@ -43,6 +358,7 @@ async def index(
     with get_connection() as conn:
         domain_options = _fetch_domain_options(conn)
         owner_options = _fetch_owner_options(conn)
+        analysis_status = _fetch_analysis_status(conn)
         query = """
             SELECT id, title, domain, status, owner, confidence, updated_at
             FROM issues
@@ -89,6 +405,7 @@ async def index(
             "owner_options": owner_options,
             "default_analysis_start": default_start,
             "default_analysis_end": default_end,
+            "analysis_status": analysis_status,
         },
     )
 
@@ -931,6 +1248,19 @@ async def delete_owner_option(
     return RedirectResponse(url=return_to, status_code=303)
 
 
+@app.get("/analysis/status", response_class=HTMLResponse)
+async def analysis_status(request: Request):
+    with get_connection() as conn:
+        status = _fetch_analysis_status(conn)
+    return templates.TemplateResponse(
+        "partials/analysis_status.html",
+        {
+            "request": request,
+            "analysis_status": status,
+        },
+    )
+
+
 @app.post("/analysis/meetings")
 async def analyze_meetings(
     request: Request,
@@ -939,6 +1269,7 @@ async def analyze_meetings(
     top_k: int = Form(50),
     return_to: str = Form("/"),
 ):
+    top_k = max(5, min(200, top_k))
     with get_connection() as conn:
         if not end:
             end = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
@@ -948,115 +1279,69 @@ async def analyze_meetings(
                 "SELECT value FROM app_state WHERE key = 'last_meeting_run_end'",
             )
             start = last_run["value"] if last_run and last_run["value"] else end
-        meetings = fetch_all(
-            conn,
-            """
-            SELECT id, meeting_date
-            FROM meetings
-            WHERE meeting_date BETWEEN ? AND ?
-            ORDER BY meeting_date ASC
-            """,
-            [start, end],
-        )
 
-        for meeting in meetings:
-            documents = fetch_all(
+        if _analysis_running():
+            status = _save_analysis_status(
                 conn,
-                """
-                SELECT id, title, path, calibre_book_id, text_excerpt
-                FROM documents
-                WHERE id IN (
-                    SELECT document_id FROM meeting_document_links WHERE meeting_id = ?
-                )
-                ORDER BY datetime(created_at) DESC
-                """,
-                [meeting["id"]],
-            )
-
-            doc_payloads = []
-            for doc in documents:
-                text = doc["text_excerpt"] or ""
-                if not text:
-                    continue
-                doc_payloads.append(
-                    {
-                        "id": doc["id"],
-                        "title": doc["title"],
-                        "path": doc["path"],
-                        "text": text,
-                    }
-                )
-
-            if not doc_payloads:
-                continue
-
-            issues = fetch_all(
-                conn,
-                """
-                SELECT id, title, domain, status, confidence, situation, complication, resolution, next_steps
-                FROM issues
-                ORDER BY datetime(updated_at) DESC
-                LIMIT 200
-                """,
-            )
-            steps_map = {}
-            for issue in issues:
-                steps_map[issue["id"]] = fetch_all(
-                    conn,
-                    """
-                    SELECT description, owner, due_date, status, position, suggested
-                    FROM issue_next_steps
-                    WHERE issue_id = ?
-                    ORDER BY position ASC, datetime(created_at) ASC
-                    """,
-                    [issue["id"]],
-                )
-
-            meeting_text = "\n\n".join(doc["text"] for doc in doc_payloads)
-            candidate_issues = select_issue_candidates(conn, issues, steps_map, meeting_text, limit=top_k)
-
-            issue_payloads = [
                 {
-                    "id": issue["id"],
-                    "title": issue["title"],
-                    "domain": issue["domain"],
-                    "status": issue["status"],
-                    "confidence": issue["confidence"],
-                    "situation": issue["situation"],
-                    "complication": issue["complication"],
-                    "resolution": issue["resolution"],
-                    "next_steps": issue["next_steps"],
-                    "steps": steps_map[issue["id"]],
-                }
-                for issue in candidate_issues
-            ]
-
-            llm_result = extract_issues(
-                meeting_date=meeting["meeting_date"],
-                documents=doc_payloads,
-                existing_issues=issue_payloads,
+                    "state": "running",
+                    "message": "Analysis is already running. Please wait for it to complete.",
+                    "start": start,
+                    "end": end,
+                    "top_k": top_k,
+                },
             )
+            conn.commit()
+            if request.headers.get("HX-Request") == "true":
+                return templates.TemplateResponse(
+                    "partials/analysis_status.html",
+                    {
+                        "request": request,
+                        "analysis_status": status,
+                    },
+                )
+            return RedirectResponse(url=return_to, status_code=303)
 
-            apply_updates(conn, meeting["id"], meeting["meeting_date"], llm_result)
-
-        conn.execute(
-            """
-            INSERT INTO app_state (key, value)
-            VALUES ('last_meeting_run_end', ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """,
-            [end],
-        )
-        conn.execute(
-            """
-            INSERT INTO app_state (key, value)
-            VALUES ('last_meeting_run_start', ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """,
-            [start],
+        status = _save_analysis_status(
+            conn,
+            {
+                "state": "running",
+                "message": f"Queued analysis for {start} to {end}...",
+                "start": start,
+                "end": end,
+                "top_k": top_k,
+                "meetings_total": 0,
+                "meetings_processed": 0,
+                "meetings_analyzed": 0,
+                "meetings_skipped": 0,
+                "error_count": 0,
+            },
         )
         conn.commit()
 
+    started = _start_analysis_thread(start, end, top_k)
+    if not started:
+        with get_connection() as conn:
+            status = _save_analysis_status(
+                conn,
+                {
+                    "state": "running",
+                    "message": "Analysis is already running. Please wait for it to complete.",
+                    "start": start,
+                    "end": end,
+                    "top_k": top_k,
+                },
+            )
+            conn.commit()
+
+    if request.headers.get("HX-Request") == "true":
+        return templates.TemplateResponse(
+            "partials/analysis_status.html",
+            {
+                "request": request,
+                "analysis_status": status,
+            },
+        )
     return RedirectResponse(url=return_to, status_code=303)
 
 
